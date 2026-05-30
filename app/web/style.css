@@ -122,3 +122,31 @@ button:disabled { opacity: .4; cursor: default; }
 #panel-inv li { font-size: 13px; }
 
 .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+
+/* Spieler-Marker: größer + abgehoben */
+.player-icon {
+  font-size: 30px;
+  line-height: 40px;
+  text-align: center;
+  filter: drop-shadow(0 0 3px #000) drop-shadow(0 0 2px #1e90ff);
+}
+
+/* Gruppe / Roster */
+.toggle { flex: 1; text-align: left; }
+.count {
+  align-self: center; min-width: 22px; text-align: center;
+  background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 10px; font-size: 12px; padding: 1px 6px; color: var(--muted);
+}
+#roster-list { list-style: none; margin: 6px 0 0; padding: 0; }
+#roster-list.hidden { display: none; }
+.roster-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 8px; margin-bottom: 4px; font-size: 13px;
+  background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 6px; cursor: pointer;
+}
+.roster-row:hover { border-color: var(--accent2); }
+.roster-row.dead { opacity: 0.5; }
+.roster-row .rname { font-weight: 600; }
+.roster-row .rstats { color: var(--muted); font-variant-numeric: tabular-nums; }

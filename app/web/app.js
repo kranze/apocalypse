@@ -30,6 +30,7 @@ const TYPE_COLORS = {
   hospital: "#d973b5",
 };
 const PLAYER_ID = 1;
+const PLAYER_GROUP = 1;
 
 function colorFor(type) {
   return TYPE_COLORS[type] || "#5b6675";
@@ -101,6 +102,9 @@ async function refreshState() {
     document.getElementById("btn-eat").disabled = !p.is_alive;
   }
   await refreshInventory();
+  if (!document.getElementById("roster-list").classList.contains("hidden")) {
+    await renderRoster();
+  }
 }
 
 async function refreshInventory() {
@@ -116,6 +120,38 @@ async function refreshInventory() {
     li.innerHTML = `<span>${it.item_id}</span><span>${(+it.quantity).toFixed(0)} · q${(+it.quality).toFixed(2)}</span>`;
     ul.appendChild(li);
   }
+}
+
+// --- Gruppe / kontrollierte Charaktere ---------------------------------
+async function renderRoster() {
+  const chars = (await getJSON("/characters")).filter(
+    (c) => c.group_id === PLAYER_GROUP
+  );
+  const ul = document.getElementById("roster-list");
+  ul.innerHTML = "";
+  document.getElementById("roster-count").textContent = chars.length;
+  for (const c of chars) {
+    const hunger = Math.round((c.hunger || 0) * 100);
+    const perf = Math.round((c.performance || 0) * 100);
+    const li = document.createElement("li");
+    li.className = "roster-row" + (c.is_alive ? "" : " dead");
+    li.innerHTML =
+      `<span class="rname">${c.name}</span>` +
+      `<span class="rstats">H ${hunger}% · L ${perf}%${c.is_alive ? "" : " ✝"}</span>`;
+    li.title = "Auf Karte zentrieren";
+    li.onclick = () => {
+      if (c.lat != null && c.lon != null) map.panTo([c.lat, c.lon]);
+    };
+    ul.appendChild(li);
+  }
+}
+
+function toggleRoster() {
+  const ul = document.getElementById("roster-list");
+  const nowOpen = ul.classList.toggle("hidden") === false;
+  document.getElementById("btn-roster").textContent =
+    (nowOpen ? "▾" : "▸") + " Gruppe";
+  if (nowOpen) renderRoster();
 }
 
 // --- Locations ---------------------------------------------------------
@@ -212,7 +248,11 @@ function movePlayerMarker(lat, lon) {
   if (!playerMarker) {
     playerMarker = L.marker([lat, lon], {
       title: "Spieler",
-      icon: L.divIcon({ className: "player-icon", html: "🧍", iconSize: [22, 22] }),
+      zIndexOffset: 1000,
+      icon: L.divIcon({
+        className: "player-icon", html: "🧍",
+        iconSize: [40, 40], iconAnchor: [20, 20],
+      }),
     }).addTo(map);
   } else {
     playerMarker.setLatLng([lat, lon]);
@@ -337,6 +377,7 @@ async function init() {
   document.getElementById("btn-ff").onclick = doFastForward;
   document.getElementById("btn-eat").onclick = doEat;
   document.getElementById("btn-prep").onclick = doPrepare;
+  document.getElementById("btn-roster").onclick = toggleRoster;
   document.getElementById("panel-close").onclick = () => {
     document.getElementById("panel").classList.add("hidden");
     selectedId = null;
