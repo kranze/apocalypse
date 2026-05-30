@@ -182,6 +182,46 @@ CREATE TABLE resource_ledger (
     expected_total  REAL NOT NULL DEFAULT 0.0
 );
 
+-- ---------------------------------------------------------------------------
+-- KNOWLEDGE BASE (verbindliche Fakten für den Adjudikator, DESIGN.md §8/§9)
+-- Provenance-Vorrang: curated > player_verified > llm_inferred.
+-- Beispiel-Topic 'heat_source': welche Items liefern Hitze zum Zubereiten.
+-- ---------------------------------------------------------------------------
+CREATE TABLE knowledge_base (
+    id              INTEGER PRIMARY KEY,
+    topic           TEXT NOT NULL,              -- z.B. 'provides:heat'
+    key             TEXT NOT NULL,              -- z.B. item_id
+    value           TEXT,                       -- JSON oder Skalar
+    provenance      TEXT NOT NULL DEFAULT 'curated', -- curated|player_verified|llm_inferred
+    created_tick    INTEGER,
+    UNIQUE(topic, key)
+);
+CREATE INDEX idx_kb_topic ON knowledge_base(topic);
+
+-- ---------------------------------------------------------------------------
+-- CAPABILITIES (persistenter Welt-State aus adjudizierten Aktionen, DESIGN.md §8)
+-- z.B. ein SSID-Beacon: hat Upkeep (laufende Kosten je Tick) und Folgen.
+-- ---------------------------------------------------------------------------
+CREATE TABLE capabilities (
+    id              INTEGER PRIMARY KEY,
+    ctype           TEXT NOT NULL,              -- z.B. 'ssid_beacon'
+    owner_group     INTEGER REFERENCES groups(id),
+    location_id     INTEGER REFERENCES locations(id),
+    params          TEXT,                       -- JSON
+    active          INTEGER NOT NULL DEFAULT 1,
+    created_tick    INTEGER,
+    upkeep          TEXT                        -- JSON: {item, per_tick}
+);
+CREATE INDEX idx_cap_active ON capabilities(active);
+
+INSERT INTO knowledge_base (topic, key, value, provenance, created_tick) VALUES
+  ('provides:heat',        'firewood',    '{"consume": 1}', 'curated', 0),
+  ('provides:power',       'generator',   '{"consume": 0}', 'curated', 0),
+  ('provides:transmitter', 'wifi_router', '{"consume": 0}', 'curated', 0),
+  ('capability_recipe:ssid_beacon', 'ssid_beacon',
+   '{"requires": ["power", "transmitter"], "upkeep": {"item": "gasoline", "per_tick": 0.02}, "range_km": 1.5}',
+   'curated', 0);
+
 -- ============================================================================
 -- MINIMALER SEED FÜR SCHRITT 1 (Beispiel-Items; vom Generator nutzbar)
 -- ============================================================================
@@ -195,7 +235,10 @@ INSERT INTO item_catalog (id, name, category, weight_kg, kcal_per_unit, decay_ha
   ('meal_pasta',    'Gekochte Nudeln',    'food',     0.55,  1750,  1440,    1, 0, 0.0, NULL),  -- ~1 Tag haltbar
   ('crowbar',       'Kuhfuß',             'tool',     1.20,  NULL,  NULL,    0, 0, 0.0, NULL),
   ('flashlight',    'Stirnlampe',         'tool',     0.15,  NULL,  NULL,    0, 0, 0.0, NULL),
-  ('firewood',      'Brennholz (Scheit)', 'fuel',     1.50,  NULL,  NULL,    1, 0, 0.0, NULL);
+  ('firewood',      'Brennholz (Scheit)', 'fuel',     1.50,  NULL,  NULL,    1, 0, 0.0, NULL),
+  ('generator',     'Stromgenerator',     'tool',    25.00,  NULL,  NULL,    0, 0, 0.0, NULL),
+  ('wifi_router',   'WLAN-Router',        'tool',     1.00,  NULL,  NULL,    0, 0, 0.0, NULL),
+  ('gasoline',      'Benzin 5L',          'fuel',     4.00,  NULL,  NULL,    1, 0, 0.0, NULL);
 
 -- Welt-Singleton initialisieren (world_seed später vom App-Start gesetzt)
 INSERT INTO world (id, world_seed, tick, start_datetime, phase)

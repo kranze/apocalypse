@@ -26,6 +26,7 @@ LOOT_TABLES: dict[str, list[dict]] = {
         {"item_id": "canned_meat", "chance": 0.50, "qty_min": 1, "qty_max": 8},
         {"item_id": "flashlight", "chance": 0.40, "qty_min": 1, "qty_max": 3},
         {"item_id": "firewood", "chance": 0.30, "qty_min": 1, "qty_max": 5},
+        {"item_id": "gasoline", "chance": 0.70, "qty_min": 1, "qty_max": 8},
     ],
     "pharmacy": [
         {"item_id": "water_1l", "chance": 0.60, "qty_min": 1, "qty_max": 8},
@@ -39,6 +40,8 @@ LOOT_TABLES: dict[str, list[dict]] = {
         {"item_id": "crowbar", "chance": 0.70, "qty_min": 1, "qty_max": 3},
         {"item_id": "flashlight", "chance": 0.60, "qty_min": 1, "qty_max": 4},
         {"item_id": "firewood", "chance": 0.80, "qty_min": 3, "qty_max": 20},
+        {"item_id": "generator", "chance": 0.25, "qty_min": 1, "qty_max": 1},
+        {"item_id": "wifi_router", "chance": 0.35, "qty_min": 1, "qty_max": 2},
     ],
     "house": [
         {"item_id": "canned_beans", "chance": 0.50, "qty_min": 1, "qty_max": 4},

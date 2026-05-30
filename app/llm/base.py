@@ -1,0 +1,41 @@
+"""Vertrag der LLM-Backends — offene Intention statt Verb-Klassifikation.
+
+``interpret`` nimmt Free-Text + read-only Kontext und liefert ein
+**Vorschlags-Objekt**: Verständnis, Machbarkeitsurteil, vorgeschlagene Effekte
+(aus dem geschlossenen Ausführungs-Vokabular) und Narration. Das LLM *schlägt
+vor*; der Sim-Kern validiert jeden Effekt hart und führt ihn aus.
+
+Proposal-Format:
+{ understanding: str, feasibility: 'feasible'|'risky'|'too_complex'|'impossible',
+  reason: str, effects: [ {op, ...params} ], narration: str }
+"""
+from __future__ import annotations
+
+from typing import Any
+
+# Geschlossenes Ausführungs-Vokabular (muss zu sim/effects.OPS passen).
+EFFECT_OPS = (
+    "move_to", "discover", "transfer", "consume_food", "prepare",
+    "advance_time", "transform", "establish_capability", "narrate",
+)
+
+FEASIBILITY = ("feasible", "risky", "too_complex", "impossible")
+
+
+class LLMBackend:
+    name = "base"
+
+    def interpret(self, text: str, context: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+
+def proposal(
+    *, understanding="", feasibility="feasible", reason="", effects=None, narration=""
+) -> dict[str, Any]:
+    return {
+        "understanding": understanding,
+        "feasibility": feasibility,
+        "reason": reason,
+        "effects": effects or [],
+        "narration": narration,
+    }

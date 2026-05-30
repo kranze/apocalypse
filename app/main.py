@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from . import config, db
 from .osm import loader
-from .sim import constants, generation, looting, movement, resources, tick
+from .sim import adjudicator, constants, generation, kb, looting, movement, resources, tick
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -53,6 +53,17 @@ class EatRequest(BaseModel):
 class MoveRequest(BaseModel):
     lat: float
     lon: float
+
+
+class AdjudicateRequest(BaseModel):
+    text: str
+    character_id: int = 1
+
+
+class OverrideRequest(BaseModel):
+    text: str
+    reason: str
+    character_id: int = 1
 
 
 class LootRequest(BaseModel):
@@ -271,13 +282,46 @@ def world_state() -> dict:
     }
 
 
+@app.post("/adjudicate")
+def adjudicate(req: AdjudicateRequest) -> dict:
+    """Free-Text-Intention bewerten und (bei Erfolg) über den Sim-Kern ausführen."""
+    conn = db.get_connection()
+    try:
+        return adjudicator.adjudicate(conn, req.character_id, req.text)
+    finally:
+        conn.close()
+
+
+@app.post("/adjudicate/override")
+def adjudicate_override(req: OverrideRequest) -> dict:
+    """Spieler-Override: Begründung reichert die KB an, dann erneuter Versuch."""
+    conn = db.get_connection()
+    try:
+        return adjudicator.override(conn, req.character_id, req.text, req.reason)
+    finally:
+        conn.close()
+
+
+@app.get("/kb")
+def kb_topic(topic: str = Query("provides:heat")) -> list[dict]:
+    """Knowledge-Base-Fakten eines Topics (Anzeige)."""
+    conn = db.get_connection()
+    try:
+        return kb.list_topic(conn, topic)
+    finally:
+        conn.close()
+
+
 @app.get("/api/info")
 def api_info() -> dict:
+    from .llm import get_backend
+
     return {
         "app": "Wasteland",
         "tick_minutes": constants.TICK_MINUTES,
         "center": [config.CENTER_LAT, config.CENTER_LON],
         "radius_m": config.RADIUS_M,
+        "llm_backend": get_backend().name,  # "stub" oder "claude"
     }
 
 

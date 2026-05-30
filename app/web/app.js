@@ -345,6 +345,41 @@ async function doEat() {
     log(e.message === "no_food" ? "Nichts (Essbares) im Rucksack." : "Fehler: " + e.message, "soft");
   }
 }
+// Free-Text-Adjudikation; bei no_heat wird der nächste Input als Override-Begründung gewertet.
+let overrideCommand = null;
+async function doCommand() {
+  const input = document.getElementById("cmd");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  try {
+    const r = overrideCommand
+      ? await postJSON("/adjudicate/override", { text: overrideCommand, reason: text })
+      : await postJSON("/adjudicate", { text });
+
+    // Narration prominent; Ablehnungs-Hinweis ergänzend.
+    log("» " + (r.narration || ""), r.ok ? null : (r.feasibility === "too_complex" ? "decision" : "soft"));
+    if (!r.ok && r.hint) log(r.hint, "soft");
+
+    if (r.escalate && r.reason === "no_heat") {
+      overrideCommand = overrideCommand || text;
+      input.placeholder = "Begründung: womit erzeugst du Hitze?";
+    } else if (r.escalate && r.reason === "override_unclear") {
+      input.placeholder = "Nenne einen Gegenstand aus deinem Rucksack …";
+    } else {
+      overrideCommand = null;
+      input.placeholder = "Was tust du?";
+    }
+    if (r.override_learned) {
+      log(`Gelernt: ${r.override_learned.key} liefert ab jetzt Hitze.`);
+    }
+    await refreshState();
+    await refreshDiscoveredMarkers();
+  } catch (e) {
+    log("Fehler: " + e.message, "decision");
+  }
+}
+
 async function doPrepare() {
   try {
     const r = await postJSON(`/characters/${PLAYER_ID}/prepare`, {});
@@ -378,6 +413,10 @@ async function init() {
   document.getElementById("btn-eat").onclick = doEat;
   document.getElementById("btn-prep").onclick = doPrepare;
   document.getElementById("btn-roster").onclick = toggleRoster;
+  document.getElementById("btn-cmd").onclick = doCommand;
+  document.getElementById("cmd").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doCommand();
+  });
   document.getElementById("panel-close").onclick = () => {
     document.getElementById("panel").classList.add("hidden");
     selectedId = null;

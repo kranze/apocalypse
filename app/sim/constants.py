@@ -32,6 +32,10 @@ K_WALK_KCAL_PER_KG_KM = 0.5
 # Qualität 0..1 nach Halbwertszeit. Fällt sie darunter -> Item verdirbt (Senke).
 SPOIL_THRESHOLD = 0.1
 
+# --- Capabilities -------------------------------------------------------
+# Chance pro Tag, dass ein aktiver SSID-Beacon einen Funk-Kontakt erzeugt.
+BEACON_CONTACT_PER_DAY = 0.5
+
 # --- Bilanz-Prüfung -----------------------------------------------------
 # Zuwachs über dieser Toleranz ohne Quelle = Bug-Alarm (Schritt 1: keine Quellen).
 AUDIT_EPS = 1e-6

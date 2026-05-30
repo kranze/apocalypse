@@ -33,6 +33,14 @@ _MIGRATIONS = (
     "CREATE TABLE IF NOT EXISTS resource_ledger ("
     " item_id TEXT PRIMARY KEY REFERENCES item_catalog(id),"
     " expected_total REAL NOT NULL DEFAULT 0.0);",
+    "CREATE TABLE IF NOT EXISTS knowledge_base ("
+    " id INTEGER PRIMARY KEY, topic TEXT NOT NULL, key TEXT NOT NULL,"
+    " value TEXT, provenance TEXT NOT NULL DEFAULT 'curated',"
+    " created_tick INTEGER, UNIQUE(topic, key));",
+    "CREATE TABLE IF NOT EXISTS capabilities ("
+    " id INTEGER PRIMARY KEY, ctype TEXT NOT NULL, owner_group INTEGER,"
+    " location_id INTEGER, params TEXT, active INTEGER NOT NULL DEFAULT 1,"
+    " created_tick INTEGER, upkeep TEXT);",
 )
 
 # (tabelle, spalte, DDL-Definition) — nur angelegt, wenn die Spalte fehlt.
@@ -50,9 +58,10 @@ def _existing_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table});").fetchall()}
 
 
-def _seed_preparation(conn: sqlite3.Connection) -> None:
-    """Idempotenter Seed der Zubereitungs-Stammdaten (auch für bestehende DBs).
-    Mahlzeit als Ziel-Item + rohe Nudeln als zuzubereitendes Item."""
+def _seed_static(conn: sqlite3.Connection) -> None:
+    """Idempotenter Seed der Stammdaten (auch für bestehende DBs): Zubereitung,
+    neue Geräte-Items und die Knowledge-Base-Grundfakten (provides:* + Rezepte)."""
+    # Zubereitung
     conn.execute(
         "INSERT OR IGNORE INTO item_catalog "
         "(id, name, category, weight_kg, kcal_per_unit, decay_halflife_min, "
@@ -63,6 +72,31 @@ def _seed_preparation(conn: sqlite3.Connection) -> None:
         "UPDATE item_catalog SET needs_preparation = 1, requires_water_l = 0.5, "
         "prepared_into = 'meal_pasta' WHERE id = 'pasta_500g';"
     )
+    # Geräte für emergente Aktionen (Adjudikator/Capabilities)
+    for vals in (
+        "('generator',   'Stromgenerator', 'tool',  25.0, NULL, NULL, 0, 0, 0.0, NULL)",
+        "('wifi_router', 'WLAN-Router',    'tool',   1.0, NULL, NULL, 0, 0, 0.0, NULL)",
+        "('gasoline',    'Benzin 5L',      'fuel',   4.0, NULL, NULL, 1, 0, 0.0, NULL)",
+    ):
+        conn.execute(
+            "INSERT OR IGNORE INTO item_catalog (id, name, category, weight_kg, "
+            "kcal_per_unit, decay_halflife_min, stackable, needs_preparation, "
+            "requires_water_l, prepared_into) VALUES " + vals + ";"
+        )
+    # Knowledge Base: Lieferanten (provides:*) + Capability-Rezept
+    for topic, key, value in (
+        ("provides:heat", "firewood", '{"consume": 1}'),
+        ("provides:power", "generator", '{"consume": 0}'),
+        ("provides:transmitter", "wifi_router", '{"consume": 0}'),
+        ("capability_recipe:ssid_beacon", "ssid_beacon",
+         '{"requires": ["power", "transmitter"], '
+         '"upkeep": {"item": "gasoline", "per_tick": 0.02}, "range_km": 1.5}'),
+    ):
+        conn.execute(
+            "INSERT OR IGNORE INTO knowledge_base (topic, key, value, provenance, "
+            "created_tick) VALUES (?, ?, ?, 'curated', 0);",
+            (topic, key, value),
+        )
 
 
 def init_db() -> None:
@@ -85,8 +119,8 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl};")
         conn.commit()
 
-        # Zubereitungs-Stammdaten idempotent nachziehen (Seed für bestehende DBs).
-        _seed_preparation(conn)
+        # Statische Stammdaten idempotent nachziehen (Seed für bestehende DBs).
+        _seed_static(conn)
         conn.commit()
 
         # world_seed aus Config übernehmen, solange noch der Platzhalter (0) steht.

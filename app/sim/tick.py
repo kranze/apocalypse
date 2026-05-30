@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from . import audit, biology, constants, movement, resources
+from . import audit, biology, capabilities, constants, movement, resources
 from .events import HALTING
 
 
@@ -34,6 +34,8 @@ def advance_tick(
         conn.execute("UPDATE world SET tick = ? WHERE id = 1;", (t1,))
         distances = movement.advance_movement(conn, minutes, t1)
         interrupts += distances.pop("_interrupts", [])
+        # Capabilities: Upkeep + Folgen (z.B. SSID-Beacon-Kontakte)
+        interrupts += capabilities.advance(conn, minutes, t1, seed)
 
         # Phase 2 — Ressourcen: Verderb (Verbrauch = explizites eat(), nicht hier)
         interrupts += resources.apply_decay(conn, t1)

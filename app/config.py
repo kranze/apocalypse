@@ -12,6 +12,15 @@ from pathlib import Path
 # Projekt-Root = Verzeichnis über app/
 ROOT = Path(__file__).resolve().parent.parent
 
+# .env (falls vorhanden) laden, damit z.B. ANTHROPIC_API_KEY automatisch in der
+# Umgebung landet — für CLI-Start und Server gleichermaßen. .env ist gitignored.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(ROOT / ".env")
+except Exception:
+    pass
+
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(f"WASTELAND_{name}", default)
