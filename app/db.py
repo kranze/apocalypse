@@ -28,11 +28,41 @@ def _schema_applied(conn: sqlite3.Connection) -> bool:
 
 
 # Leichtgewichtige Migrationen für bereits bestehende DBs (idempotent).
+# Tabellen via CREATE TABLE IF NOT EXISTS; Spalten via _ADD_COLUMNS (geprüft).
 _MIGRATIONS = (
     "CREATE TABLE IF NOT EXISTS resource_ledger ("
     " item_id TEXT PRIMARY KEY REFERENCES item_catalog(id),"
     " expected_total REAL NOT NULL DEFAULT 0.0);",
 )
+
+# (tabelle, spalte, DDL-Definition) — nur angelegt, wenn die Spalte fehlt.
+_ADD_COLUMNS = (
+    ("characters", "dest_lat", "REAL"),
+    ("characters", "dest_lon", "REAL"),
+    ("characters", "path_json", "TEXT"),
+    ("item_catalog", "needs_preparation", "INTEGER NOT NULL DEFAULT 0"),
+    ("item_catalog", "requires_water_l", "REAL NOT NULL DEFAULT 0.0"),
+    ("item_catalog", "prepared_into", "TEXT"),
+)
+
+
+def _existing_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table});").fetchall()}
+
+
+def _seed_preparation(conn: sqlite3.Connection) -> None:
+    """Idempotenter Seed der Zubereitungs-Stammdaten (auch für bestehende DBs).
+    Mahlzeit als Ziel-Item + rohe Nudeln als zuzubereitendes Item."""
+    conn.execute(
+        "INSERT OR IGNORE INTO item_catalog "
+        "(id, name, category, weight_kg, kcal_per_unit, decay_halflife_min, "
+        " stackable, needs_preparation, requires_water_l, prepared_into) VALUES "
+        "('meal_pasta', 'Gekochte Nudeln', 'food', 0.55, 1750, 1440, 1, 0, 0.0, NULL);"
+    )
+    conn.execute(
+        "UPDATE item_catalog SET needs_preparation = 1, requires_water_l = 0.5, "
+        "prepared_into = 'meal_pasta' WHERE id = 'pasta_500g';"
+    )
 
 
 def init_db() -> None:
@@ -49,6 +79,14 @@ def init_db() -> None:
         # Nachträgliche Tabellen für DBs, die vor einer Schema-Erweiterung entstanden.
         for stmt in _MIGRATIONS:
             conn.execute(stmt)
+        # Nachträgliche Spalten (SQLite kennt kein ADD COLUMN IF NOT EXISTS).
+        for table, column, ddl in _ADD_COLUMNS:
+            if column not in _existing_columns(conn, table):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl};")
+        conn.commit()
+
+        # Zubereitungs-Stammdaten idempotent nachziehen (Seed für bestehende DBs).
+        _seed_preparation(conn)
         conn.commit()
 
         # world_seed aus Config übernehmen, solange noch der Platzhalter (0) steht.

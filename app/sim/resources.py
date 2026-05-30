@@ -9,8 +9,10 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from . import constants, ledger
+from . import constants, heat, ledger
 from .events import emit_event
+
+WATER_ITEM = "water_1l"
 
 
 def quality_at(anchor_tick: int, now_tick: int, halflife_min: int | None) -> float:
@@ -132,10 +134,12 @@ def eat(
         if item_id is not None:
             extra = "AND gi.item_id = ? "
             params.append(item_id)
+        # Rohe, zuzubereitende Items (needs_preparation=1) sind nicht direkt essbar.
         food = conn.execute(
             "SELECT gi.id, gi.item_id, gi.quantity, gi.quality, ic.kcal_per_unit "
             "FROM group_inventory gi JOIN item_catalog ic ON ic.id = gi.item_id "
-            "WHERE gi.group_id = ? AND ic.category = 'food' AND gi.quantity > 0 "
+            "WHERE gi.group_id = ? AND ic.category = 'food' "
+            "AND ic.needs_preparation = 0 AND gi.quantity > 0 "
             + extra
             + "ORDER BY (ic.kcal_per_unit * gi.quality) DESC LIMIT 1;",
             params,
@@ -181,3 +185,113 @@ def eat(
         "kcal": round(kcal, 1),
         "hunger": round(new_hunger, 4),
     }
+
+
+def _consume_from_group(
+    conn: sqlite3.Connection, group_id: int, item_id: str, amount: float
+) -> bool:
+    """Entnimmt ``amount`` eines Items aus dem Gruppen-Inventar (höchste Qualität
+    zuerst, über mehrere Stapel hinweg). Liefert True bei voller Deckung."""
+    remaining = amount
+    rows = conn.execute(
+        "SELECT id, quantity FROM group_inventory "
+        "WHERE group_id = ? AND item_id = ? ORDER BY quality DESC, id;",
+        (group_id, item_id),
+    ).fetchall()
+    for r in rows:
+        if remaining <= 1e-9:
+            break
+        take = min(r["quantity"], remaining)
+        left = r["quantity"] - take
+        if left <= 1e-9:
+            conn.execute("DELETE FROM group_inventory WHERE id = ?;", (r["id"],))
+        else:
+            conn.execute(
+                "UPDATE group_inventory SET quantity = ? WHERE id = ?;", (left, r["id"])
+            )
+        remaining -= take
+    return remaining <= 1e-9
+
+
+def prepare(
+    conn: sqlite3.Connection, character_id: int, item_id: str | None = None
+) -> dict[str, Any]:
+    """Zubereitung als atomare Transformation (DESIGN.md §6 Crafting):
+    verbraucht 1 rohes Item + Wasser + eine Hitzequelle, erzeugt 1 Mahlzeit.
+
+    Die Hitzequelle liefert die austauschbare Naht ``heat.can_provide_heat``
+    (Schritt 1: Feuerholz; ab Schritt 2 adjudikator-/KB-gesteuert). Jede
+    Mengenänderung wird ins Ledger gebucht -> Bilanz bleibt drift-frei.
+    """
+    with conn:
+        char = conn.execute(
+            "SELECT id, group_id FROM characters WHERE id = ? AND is_alive = 1;",
+            (character_id,),
+        ).fetchone()
+        if char is None:
+            return {"ok": False, "reason": "no_such_living_character"}
+        group_id = char["group_id"]
+
+        params: list[Any] = [group_id]
+        extra = ""
+        if item_id is not None:
+            extra = "AND gi.item_id = ? "
+            params.append(item_id)
+        raw = conn.execute(
+            "SELECT gi.item_id, ic.requires_water_l, ic.prepared_into "
+            "FROM group_inventory gi JOIN item_catalog ic ON ic.id = gi.item_id "
+            "WHERE gi.group_id = ? AND ic.needs_preparation = 1 "
+            "AND ic.prepared_into IS NOT NULL AND gi.quantity >= 1 "
+            + extra
+            + "ORDER BY gi.item_id LIMIT 1;",
+            params,
+        ).fetchone()
+        if raw is None:
+            return {"ok": False, "reason": "nothing_to_prepare"}
+
+        need_water = raw["requires_water_l"] or 0.0
+        water_avail = conn.execute(
+            "SELECT COALESCE(SUM(quantity), 0.0) AS q FROM group_inventory "
+            "WHERE group_id = ? AND item_id = ?;",
+            (group_id, WATER_ITEM),
+        ).fetchone()["q"]
+        if water_avail < need_water:
+            return {"ok": False, "reason": "no_water"}
+
+        fuel = heat.can_provide_heat(conn, group_id)
+        if fuel is None:
+            return {"ok": False, "reason": "no_heat"}
+        fuel_item, fuel_amount = fuel
+
+        # Verbrauch (Senken) — jede Änderung ins Ledger.
+        _consume_from_group(conn, group_id, raw["item_id"], 1.0)
+        ledger.add(conn, raw["item_id"], -1.0)
+        if need_water > 0:
+            _consume_from_group(conn, group_id, WATER_ITEM, need_water)
+            ledger.add(conn, WATER_ITEM, -need_water)
+        _consume_from_group(conn, group_id, fuel_item, fuel_amount)
+        ledger.add(conn, fuel_item, -fuel_amount)
+
+        # Produkt (Quelle) — frische Mahlzeit, Decay-Anker = jetzt.
+        meal = raw["prepared_into"]
+        now_tick = conn.execute("SELECT tick FROM world WHERE id = 1;").fetchone()["tick"]
+        conn.execute(
+            "INSERT INTO group_inventory (group_id, item_id, quantity, quality, "
+            "acquired_tick) VALUES (?, ?, 1.0, 1.0, ?) "
+            "ON CONFLICT(group_id, item_id, quality) DO UPDATE SET "
+            "quantity = quantity + 1.0;",
+            (group_id, meal, now_tick),
+        )
+        ledger.add(conn, meal, 1.0)
+
+        emit_event(
+            conn, now_tick, "need",
+            f"Zubereitet: {meal} (aus {raw['item_id']}, {need_water:g} L Wasser, "
+            f"{fuel_amount:g} {fuel_item}).",
+            subject_type="character", subject_id=character_id,
+            payload={"from": raw["item_id"], "meal": meal,
+                     "water": need_water, "fuel": fuel_item},
+        )
+
+    return {"ok": True, "prepared": meal, "from": raw["item_id"],
+            "water_used": need_water, "fuel": fuel_item}

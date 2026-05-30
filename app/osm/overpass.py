@@ -36,23 +36,33 @@ out geom;
 """.strip()
 
 
-def _cache_key(lat: float, lon: float, radius_m: int) -> str:
+def _cache_key(lat: float, lon: float, radius_m: int, tag: str = "") -> str:
     raw = f"{QUERY_VERSION}|{lat:.6f}|{lon:.6f}|{radius_m}"
+    if tag:
+        raw += f"|{tag}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def _cache_file(lat: float, lon: float, radius_m: int) -> Path:
-    return config.OSM_CACHE_DIR / f"{_cache_key(lat, lon, radius_m)}.json"
+def _cache_file(lat: float, lon: float, radius_m: int, tag: str = "") -> Path:
+    return config.OSM_CACHE_DIR / f"{_cache_key(lat, lon, radius_m, tag)}.json"
 
 
-def fetch(lat: float, lon: float, radius_m: int, *, force: bool = False) -> dict[str, Any]:
-    """Liefert die Overpass-Antwort als dict. Nutzt Disk-Cache, falls vorhanden
-    (außer ``force=True``)."""
-    cache_file = _cache_file(lat, lon, radius_m)
+def fetch_query(
+    query: str,
+    lat: float,
+    lon: float,
+    radius_m: int,
+    *,
+    tag: str = "",
+    force: bool = False,
+) -> dict[str, Any]:
+    """Führt eine beliebige Overpass-Query aus und cached sie unter
+    (coords, radius, tag). ``tag`` trennt verschiedene Query-Arten im Cache
+    (z.B. POIs vs. Straßen)."""
+    cache_file = _cache_file(lat, lon, radius_m, tag)
     if cache_file.exists() and not force:
         return json.loads(cache_file.read_text(encoding="utf-8"))
 
-    query = build_query(lat, lon, radius_m)
     resp = requests.post(
         config.OVERPASS_URL,
         data={"data": query},
@@ -65,3 +75,8 @@ def fetch(lat: float, lon: float, radius_m: int, *, force: bool = False) -> dict
     config.OSM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(data), encoding="utf-8")
     return data
+
+
+def fetch(lat: float, lon: float, radius_m: int, *, force: bool = False) -> dict[str, Any]:
+    """Liefert die POI/Gebäude-Overpass-Antwort als dict (Disk-Cache, tag=\"\")."""
+    return fetch_query(build_query(lat, lon, radius_m), lat, lon, radius_m, force=force)

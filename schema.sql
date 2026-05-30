@@ -38,7 +38,12 @@ CREATE TABLE item_catalog (
     -- NULL = praktisch nicht verderblich (z.B. Werkzeug, Konserve sehr lang).
     decay_halflife_min  INTEGER,
     decay_temp_ref_c    REAL DEFAULT 15.0,      -- Referenztemp für Decay-Rate
-    stackable       INTEGER NOT NULL DEFAULT 1  -- 0|1
+    stackable       INTEGER NOT NULL DEFAULT 1, -- 0|1
+    -- Zubereitung: braucht das Item Hitze+Wasser, bevor es essbar ist?
+    -- Die Hitzequelle selbst ist später Sache des Adjudikators (siehe sim/heat.py).
+    needs_preparation INTEGER NOT NULL DEFAULT 0,   -- 0|1
+    requires_water_l  REAL    NOT NULL DEFAULT 0.0, -- benötigtes Wasser je Einheit
+    prepared_into     TEXT                          -- Ziel-Item nach Zubereitung
 );
 
 -- ---------------------------------------------------------------------------
@@ -124,7 +129,12 @@ CREATE TABLE characters (
     performance     REAL NOT NULL DEFAULT 1.0,
     is_alive        INTEGER NOT NULL DEFAULT 1,
     -- Tagesbedarf (für Verbrauch); Default ~2500 kcal
-    daily_kcal      REAL NOT NULL DEFAULT 2500.0
+    daily_kcal      REAL NOT NULL DEFAULT 2500.0,
+    -- Fuß-Routing: aktuelles Ziel + verbleibende Wegpunkte (JSON [[lat,lon],...]).
+    -- NULL = steht still. Bewegung wird im Tick (Phase 1) abgelaufen.
+    dest_lat        REAL,
+    dest_lon        REAL,
+    path_json       TEXT
 );
 CREATE INDEX idx_char_group ON characters(group_id);
 
@@ -175,16 +185,17 @@ CREATE TABLE resource_ledger (
 -- ============================================================================
 -- MINIMALER SEED FÜR SCHRITT 1 (Beispiel-Items; vom Generator nutzbar)
 -- ============================================================================
-INSERT INTO item_catalog (id, name, category, weight_kg, kcal_per_unit, decay_halflife_min, stackable) VALUES
-  ('canned_beans',  'Dose Bohnen',        'food',     0.40,  330,   NULL,    1),
-  ('canned_meat',   'Dose Fleisch',       'food',     0.30,  450,   NULL,    1),
-  ('bread_loaf',    'Brot',               'food',     0.50,  1100,  4320,    1),  -- ~3 Tage
-  ('milk_1l',       'Milch 1L',           'food',     1.03,  640,   2880,    1),  -- ~2 Tage
-  ('water_1l',      'Wasser 1L',          'water',    1.00,  NULL,  NULL,    1),
-  ('pasta_500g',    'Nudeln 500g',        'food',     0.50,  1750,  NULL,    1),
-  ('crowbar',       'Kuhfuß',             'tool',     1.20,  NULL,  NULL,    0),
-  ('flashlight',    'Stirnlampe',         'tool',     0.15,  NULL,  NULL,    0),
-  ('firewood',      'Brennholz (Scheit)', 'fuel',     1.50,  NULL,  NULL,    1);
+INSERT INTO item_catalog (id, name, category, weight_kg, kcal_per_unit, decay_halflife_min, stackable, needs_preparation, requires_water_l, prepared_into) VALUES
+  ('canned_beans',  'Dose Bohnen',        'food',     0.40,  330,   NULL,    1, 0, 0.0, NULL),
+  ('canned_meat',   'Dose Fleisch',       'food',     0.30,  450,   NULL,    1, 0, 0.0, NULL),
+  ('bread_loaf',    'Brot',               'food',     0.50,  1100,  4320,    1, 0, 0.0, NULL),  -- ~3 Tage
+  ('milk_1l',       'Milch 1L',           'food',     1.03,  640,   2880,    1, 0, 0.0, NULL),  -- ~2 Tage
+  ('water_1l',      'Wasser 1L',          'water',    1.00,  NULL,  NULL,    1, 0, 0.0, NULL),
+  ('pasta_500g',    'Nudeln 500g (roh)',  'food',     0.50,  1750,  NULL,    1, 1, 0.5, 'meal_pasta'),  -- braucht Hitze+Wasser
+  ('meal_pasta',    'Gekochte Nudeln',    'food',     0.55,  1750,  1440,    1, 0, 0.0, NULL),  -- ~1 Tag haltbar
+  ('crowbar',       'Kuhfuß',             'tool',     1.20,  NULL,  NULL,    0, 0, 0.0, NULL),
+  ('flashlight',    'Stirnlampe',         'tool',     0.15,  NULL,  NULL,    0, 0, 0.0, NULL),
+  ('firewood',      'Brennholz (Scheit)', 'fuel',     1.50,  NULL,  NULL,    1, 0, 0.0, NULL);
 
 -- Welt-Singleton initialisieren (world_seed später vom App-Start gesetzt)
 INSERT INTO world (id, world_seed, tick, start_datetime, phase)

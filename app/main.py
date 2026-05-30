@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from . import config, db
 from .osm import loader
-from .sim import constants, generation, looting, resources, tick
+from .sim import constants, generation, looting, movement, resources, tick
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -62,7 +62,7 @@ class LootRequest(BaseModel):
 
 _CHARACTER_COLS = (
     "id, name, type, group_id, lat, lon, hunger, thirst, sleep, injury, "
-    "exposure, performance, is_alive, daily_kcal"
+    "exposure, performance, is_alive, daily_kcal, dest_lat, dest_lon, path_json"
 )
 
 
@@ -219,25 +219,31 @@ def character_eat(character_id: int, req: EatRequest) -> dict:
     return result
 
 
-@app.post("/characters/{character_id}/move")
-def character_move(character_id: int, req: MoveRequest) -> dict:
-    """Setzt die Spielerposition (Weltsicht: 'laufen')."""
+@app.post("/characters/{character_id}/prepare")
+def character_prepare(character_id: int, req: EatRequest) -> dict:
+    """Bereitet ein rohes Lebensmittel zu (Hitze + Wasser -> Mahlzeit)."""
     conn = db.get_connection()
     try:
-        cur = conn.execute(
-            "SELECT id FROM characters WHERE id = ? AND is_alive = 1;",
-            (character_id,),
-        ).fetchone()
-        if cur is None:
-            raise HTTPException(status_code=404, detail="no_such_living_character")
-        conn.execute(
-            "UPDATE characters SET lat = ?, lon = ? WHERE id = ?;",
-            (req.lat, req.lon, character_id),
-        )
-        conn.commit()
+        result = resources.prepare(conn, character_id, req.item_id)
     finally:
         conn.close()
-    return {"ok": True, "lat": req.lat, "lon": req.lon}
+    if not result["ok"]:
+        raise HTTPException(status_code=409, detail=result["reason"])
+    return result
+
+
+@app.post("/characters/{character_id}/move")
+def character_move(character_id: int, req: MoveRequest) -> dict:
+    """Setzt ein Ziel und berechnet die Fußroute (Weltsicht: 'laufen').
+    Die Bewegung selbst läuft über die Ticks ab."""
+    conn = db.get_connection()
+    try:
+        result = movement.set_destination(conn, character_id, req.lat, req.lon)
+    finally:
+        conn.close()
+    if not result["ok"]:
+        raise HTTPException(status_code=409, detail=result["reason"])
+    return result
 
 
 @app.get("/world/state")

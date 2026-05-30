@@ -12,6 +12,7 @@ from typing import Any
 
 from . import constants
 from .events import emit_event
+from .movement import carried_weight
 from .rng import roll
 
 
@@ -21,18 +22,32 @@ def _hunger_penalty(hunger: float) -> float:
 
 
 def apply_hunger(
-    conn: sqlite3.Connection, minutes: int, now_tick: int
+    conn: sqlite3.Connection,
+    minutes: int,
+    now_tick: int,
+    distances: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Senkt die Sättigung aller Lebenden über die verstrichene Zeit.
 
-    Emittiert einen Interrupt beim *Überschreiten* einer Schwelle (einmalig).
+    Grundverbrauch (Zeit) plus Aktivitäts-Verbrauch: gelaufene Distanz mal
+    Gesamtgewicht (Körper + Rucksack). ``distances`` = {char_id: meter} aus der
+    Bewegungsphase. Emittiert einen Interrupt beim *Überschreiten* einer
+    Schwelle (einmalig).
     """
-    loss = minutes / constants.MINUTES_PER_DAY * constants.HUNGER_LOSS_PER_DAY
+    distances = distances or {}
+    base_loss = minutes / constants.MINUTES_PER_DAY * constants.HUNGER_LOSS_PER_DAY
     interrupts = []
     for row in conn.execute(
-        "SELECT id, name, hunger FROM characters WHERE is_alive = 1;"
+        "SELECT id, name, hunger, weight_kg, group_id, daily_kcal "
+        "FROM characters WHERE is_alive = 1;"
     ).fetchall():
         old = row["hunger"]
+        loss = base_loss
+        dist_m = distances.get(row["id"], 0.0)
+        if dist_m > 0:
+            total_kg = (row["weight_kg"] or 0.0) + carried_weight(conn, row["group_id"])
+            kcal = constants.K_WALK_KCAL_PER_KG_KM * total_kg * (dist_m / 1000.0)
+            loss += kcal / row["daily_kcal"]
         new = max(0.0, old - loss)
         conn.execute(
             "UPDATE characters SET hunger = ? WHERE id = ?;",

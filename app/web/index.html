@@ -28,10 +28,18 @@
       <div class="bar"><span id="perf-fill"></span></div>
       <span id="perf-val" class="val">—</span>
     </div>
+    <div class="row speedbar" id="speedbar">
+      <button data-speed="0" class="active" title="Pause">⏸</button>
+      <button data-speed="1">1×</button>
+      <button data-speed="2">2×</button>
+      <button data-speed="4">4×</button>
+      <button data-speed="8">8×</button>
+      <button data-speed="16">16×</button>
+    </div>
     <div class="row buttons">
-      <button id="btn-tick">+10 Min</button>
-      <button id="btn-ff">Vorspulen</button>
+      <button id="btn-ff" title="bis zum nächsten Ereignis">⏭ Ereignis</button>
       <button id="btn-eat">Essen</button>
+      <button id="btn-prep">Zubereiten</button>
     </div>
     <h2>Rucksack</h2>
     <ul id="inventory"><li class="empty">leer</li></ul>

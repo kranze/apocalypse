@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from . import audit, biology, constants, resources
+from . import audit, biology, constants, movement, resources
 from .events import HALTING
 
 
@@ -30,14 +30,16 @@ def advance_tick(
         t0, seed = world["tick"], world["world_seed"]
         t1 = t0 + minutes
 
-        # Phase 1 — Physik/Welt: Zeit (Wetter ist in Schritt 1 nur Snapshot)
+        # Phase 1 — Physik/Welt: Zeit + Bewegung (Wetter ist Schritt 1 nur Snapshot)
         conn.execute("UPDATE world SET tick = ? WHERE id = 1;", (t1,))
+        distances = movement.advance_movement(conn, minutes, t1)
+        interrupts += distances.pop("_interrupts", [])
 
         # Phase 2 — Ressourcen: Verderb (Verbrauch = explizites eat(), nicht hier)
         interrupts += resources.apply_decay(conn, t1)
 
-        # Phase 3 — Biologie: Bedürfnisse, Performance, Sterbe-Check
-        interrupts += biology.apply_hunger(conn, minutes, t1)
+        # Phase 3 — Biologie: Bedürfnisse (inkl. Aktivität), Performance, Sterbe-Check
+        interrupts += biology.apply_hunger(conn, minutes, t1, distances)
         biology.recompute_performance(conn)
         interrupts += biology.death_check(conn, t1, minutes, seed)
 

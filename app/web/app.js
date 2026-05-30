@@ -49,9 +49,15 @@ function styleFor(loc) {
 // --- Zustand -----------------------------------------------------------
 let map;
 let playerMarker;
+let routeLine = null;
 const markers = new Map(); // id -> L.circleMarker
 const locData = new Map(); // id -> location
 let selectedId = null;
+
+// Zeitfluss
+let speed = 0;          // 0 = Pause; sonst Spielminuten pro Frame
+let frameBusy = false;  // verhindert überlappende Tick-Requests
+const FRAME_MS = 1000;
 
 function log(msg, severity) {
   const ul = document.getElementById("log");
@@ -91,6 +97,7 @@ async function refreshState() {
     setBar("hunger-fill", "hunger-val", p.hunger);
     setBar("perf-fill", "perf-val", p.performance);
     if (p.lat != null && p.lon != null) movePlayerMarker(p.lat, p.lon);
+    updateRoute(p);
     document.getElementById("btn-eat").disabled = !p.is_alive;
   }
   await refreshInventory();
@@ -212,10 +219,33 @@ function movePlayerMarker(lat, lon) {
   }
 }
 
+function drawRoute(waypoints) {
+  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+  if (!waypoints || !waypoints.length) return;
+  const pts = [];
+  if (playerMarker) {
+    const ll = playerMarker.getLatLng();
+    pts.push([ll.lat, ll.lng]);
+  }
+  for (const w of waypoints) pts.push([w[0], w[1]]);
+  routeLine = L.polyline(pts, {
+    color: "#1e90ff", weight: 5, opacity: 0.9,
+  }).addTo(map);
+}
+
+function updateRoute(player) {
+  if (player.path_json) {
+    try { drawRoute(JSON.parse(player.path_json)); return; } catch (e) {}
+  }
+  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+}
+
 async function walkTo(lat, lon) {
+  // Ziel setzen + Route berechnen; der Spieler läuft sie über die Ticks ab.
   try {
-    await postJSON(`/characters/${PLAYER_ID}/move`, { lat, lon });
-    movePlayerMarker(lat, lon);
+    const r = await postJSON(`/characters/${PLAYER_ID}/move`, { lat, lon });
+    drawRoute(r.path);
+    log(`Unterwegs zum Ziel (${Math.round(r.distance_m)} m).`);
   } catch (e) { log("Fehler: " + e.message, "decision"); }
 }
 
@@ -229,14 +259,35 @@ async function refreshDiscoveredMarkers() {
   for (const loc of locs) updateLocation(loc);
 }
 
-async function doTick() {
+function setSpeed(s) {
+  speed = s;
+  for (const b of document.querySelectorAll("#speedbar button")) {
+    b.classList.toggle("active", Number(b.dataset.speed) === s);
+  }
+}
+
+async function tickFrame() {
+  if (speed === 0 || frameBusy) return;
+  frameBusy = true;
   try {
-    const r = await postJSON("/world/tick", {});
-    reportInterrupts(r.interrupts);
+    const r = await postJSON("/world/tick", { minutes: speed });
     await refreshState();
-  } catch (e) { log("Fehler: " + e.message, "decision"); }
+    const halting = (r.interrupts || []).filter(
+      (i) => i.severity === "soft" || i.severity === "decision"
+    );
+    if (halting.length) {
+      setSpeed(0); // bei Ereignis automatisch pausieren (DESIGN.md §4)
+      reportInterrupts(halting);
+    }
+  } catch (e) {
+    setSpeed(0);
+    log("Fehler: " + e.message, "decision");
+  } finally {
+    frameBusy = false;
+  }
 }
 async function doFastForward() {
+  setSpeed(0);
   try {
     const r = await postJSON("/world/fast-forward", { max_ticks: 5000 });
     log(`Vorgespult bis Tick ${r.tick} (${r.stopped}).`);
@@ -251,7 +302,21 @@ async function doEat() {
     log(`Gegessen: ${r.item} (+${r.kcal} kcal).`);
     await refreshState();
   } catch (e) {
-    log(e.message === "no_food" ? "Nichts zu essen im Rucksack." : "Fehler: " + e.message, "soft");
+    log(e.message === "no_food" ? "Nichts (Essbares) im Rucksack." : "Fehler: " + e.message, "soft");
+  }
+}
+async function doPrepare() {
+  try {
+    const r = await postJSON(`/characters/${PLAYER_ID}/prepare`, {});
+    log(`Zubereitet: ${r.prepared} (aus ${r.from}, ${r.water_used} L Wasser).`);
+    await refreshInventory();
+  } catch (e) {
+    const msg = {
+      no_heat: "Keine Hitzequelle (Feuerholz fehlt).",
+      no_water: "Nicht genug Wasser.",
+      nothing_to_prepare: "Nichts zuzubereiten.",
+    }[e.message] || ("Fehler: " + e.message);
+    log(msg, "soft");
   }
 }
 
@@ -266,9 +331,12 @@ async function init() {
 
   map.on("click", (e) => walkTo(e.latlng.lat, e.latlng.lng));
 
-  document.getElementById("btn-tick").onclick = doTick;
+  for (const b of document.querySelectorAll("#speedbar button")) {
+    b.onclick = () => setSpeed(Number(b.dataset.speed));
+  }
   document.getElementById("btn-ff").onclick = doFastForward;
   document.getElementById("btn-eat").onclick = doEat;
+  document.getElementById("btn-prep").onclick = doPrepare;
   document.getElementById("panel-close").onclick = () => {
     document.getElementById("panel").classList.add("hidden");
     selectedId = null;
@@ -276,6 +344,7 @@ async function init() {
 
   await loadLocations();
   await refreshState();
+  setInterval(tickFrame, FRAME_MS); // kontinuierlicher Zeitfluss (gesteuert über speed)
 }
 
 init().catch((e) => log("Init-Fehler: " + e.message, "decision"));

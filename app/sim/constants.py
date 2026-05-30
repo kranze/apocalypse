@@ -23,6 +23,11 @@ CRIT_PERFORMANCE = 0.2
 # Skalierung der Sterbe-Wahrscheinlichkeit; ~50% Tod/Tag bei Performance 0.
 DEATH_K = 3.5
 
+# --- Bewegung -----------------------------------------------------------
+WALK_SPEED_M_PER_MIN = 83.0     # ~5 km/h Fußgeschwindigkeit (Spielminuten)
+# Aktivitäts-Energie: kcal pro kg Gesamtgewicht (Körper + Last) pro km.
+K_WALK_KCAL_PER_KG_KM = 0.5
+
 # --- Decay / Verderb ----------------------------------------------------
 # Qualität 0..1 nach Halbwertszeit. Fällt sie darunter -> Item verdirbt (Senke).
 SPOIL_THRESHOLD = 0.1
