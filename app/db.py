@@ -59,6 +59,14 @@ def init_db() -> None:
                 (config.WORLD_SEED,),
             )
             conn.commit()
+
+        # Spieler-Startposition: auf das Viertel-Zentrum, solange noch nicht gesetzt.
+        conn.execute(
+            "UPDATE characters SET lat = ?, lon = ? "
+            "WHERE type = 'player' AND lat IS NULL;",
+            (config.CENTER_LAT, config.CENTER_LON),
+        )
+        conn.commit()
     finally:
         conn.close()
 

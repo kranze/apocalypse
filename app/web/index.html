@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wasteland — Weltsicht</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="hud">
+    <h1>Wasteland</h1>
+    <div class="row" id="clock">—</div>
+    <div class="needbar">
+      <label>Hunger</label>
+      <div class="bar"><span id="hunger-fill"></span></div>
+      <span id="hunger-val" class="val">—</span>
+    </div>
+    <div class="needbar">
+      <label>Leistung</label>
+      <div class="bar"><span id="perf-fill"></span></div>
+      <span id="perf-val" class="val">—</span>
+    </div>
+    <div class="row buttons">
+      <button id="btn-tick">+10 Min</button>
+      <button id="btn-ff">Vorspulen</button>
+      <button id="btn-eat">Essen</button>
+    </div>
+    <h2>Rucksack</h2>
+    <ul id="inventory"><li class="empty">leer</li></ul>
+    <h2>Log</h2>
+    <ul id="log"></ul>
+    <p class="hint">Karte klicken = laufen · Gebäude klicken = betreten/plündern</p>
+  </div>
+
+  <div id="panel" class="hidden">
+    <button id="panel-close">✕</button>
+    <h2 id="panel-title">—</h2>
+    <div id="panel-meta"></div>
+    <div id="panel-actions"></div>
+    <ul id="panel-inv"></ul>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="/app.js"></script>
+</body>
+</html>

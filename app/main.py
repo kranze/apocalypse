@@ -6,13 +6,18 @@ Basis für den späteren Renderer (DESIGN.md §3 Weltsicht).
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, db
 from .osm import loader
 from .sim import constants, generation, looting, resources, tick
+
+WEB_DIR = Path(__file__).resolve().parent / "web"
 
 
 @asynccontextmanager
@@ -43,6 +48,11 @@ class FastForwardRequest(BaseModel):
 
 class EatRequest(BaseModel):
     item_id: str | None = None
+
+
+class MoveRequest(BaseModel):
+    lat: float
+    lon: float
 
 
 class LootRequest(BaseModel):
@@ -209,21 +219,62 @@ def character_eat(character_id: int, req: EatRequest) -> dict:
     return result
 
 
-@app.get("/")
-def root() -> dict:
+@app.post("/characters/{character_id}/move")
+def character_move(character_id: int, req: MoveRequest) -> dict:
+    """Setzt die Spielerposition (Weltsicht: 'laufen')."""
     conn = db.get_connection()
     try:
-        world = conn.execute(
-            "SELECT tick, world_seed, phase FROM world WHERE id = 1;"
+        cur = conn.execute(
+            "SELECT id FROM characters WHERE id = ? AND is_alive = 1;",
+            (character_id,),
+        ).fetchone()
+        if cur is None:
+            raise HTTPException(status_code=404, detail="no_such_living_character")
+        conn.execute(
+            "UPDATE characters SET lat = ?, lon = ? WHERE id = ?;",
+            (req.lat, req.lon, character_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "lat": req.lat, "lon": req.lon}
+
+
+@app.get("/world/state")
+def world_state() -> dict:
+    """Kompakter HUD-Zustand: Zeit (abgeleitet aus tick), Phase, Wetter, Spieler."""
+    conn = db.get_connection()
+    try:
+        w = conn.execute(
+            "SELECT tick, start_datetime, phase, weather_temp_c, weather_state "
+            "FROM world WHERE id = 1;"
+        ).fetchone()
+        player = conn.execute(
+            f"SELECT {_CHARACTER_COLS} FROM characters WHERE id = 1;"
         ).fetchone()
     finally:
         conn.close()
+    dt = datetime.fromisoformat(w["start_datetime"]) + timedelta(minutes=w["tick"])
+    return {
+        "tick": w["tick"],
+        "datetime": dt.isoformat(),
+        "phase": w["phase"],
+        "tick_minutes": constants.TICK_MINUTES,
+        "weather": {"temp_c": w["weather_temp_c"], "state": w["weather_state"]},
+        "player": dict(player) if player else None,
+    }
+
+
+@app.get("/api/info")
+def api_info() -> dict:
     return {
         "app": "Wasteland",
-        "phase": world["phase"],
-        "tick": world["tick"],
-        "world_seed": world["world_seed"],
         "tick_minutes": constants.TICK_MINUTES,
         "center": [config.CENTER_LAT, config.CENTER_LON],
         "radius_m": config.RADIUS_M,
     }
+
+
+# Statisches Frontend zuletzt mounten, damit alle API-Routen Vorrang haben.
+# html=True liefert index.html unter "/".
+app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
