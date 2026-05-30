@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Laufzeit-Daten (generiert: SQLite-DB + OSM-Cache) — nicht versionieren
+/data/
+
+# Claude Code lokale Einstellungen
+.claude/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

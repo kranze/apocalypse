@@ -1,0 +1,5 @@
+# Zeilenenden im Repo normalisieren (LF), plattformneutral.
+* text=auto
+*.py text eol=lf
+*.sql text eol=lf
+*.md text eol=lf
