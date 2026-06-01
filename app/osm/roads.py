@@ -125,6 +125,7 @@ def build_graph(data: dict[str, Any]) -> RoadGraph:
 
 # --- Prozess-Cache ------------------------------------------------------
 _graph: RoadGraph | None = None
+_graph_key: tuple | None = None  # (lat, lon, radius) des aktuell gecachten Graphen
 
 
 def get_graph(
@@ -134,14 +135,18 @@ def get_graph(
     *,
     force: bool = False,
 ) -> RoadGraph:
-    """Lazy: baut den Graph einmal aus dem (gecachten) Straßennetz um das
-    konfigurierte Viertel und hält ihn im Prozess."""
-    global _graph
-    if _graph is not None and not force:
-        return _graph
+    """Lazy: baut den Graph aus dem (gecachten) Straßennetz um das angegebene
+    Gebiet und hält ihn im Prozess. Der Cache ist an das Gebiet gebunden —
+    ändert sich das Zuhause (z.B. neues Spiel oder Resume), wird neu gebaut.
+    Ohne Argumente Fallback auf das Config-Viertel (Tests/CLI)."""
+    global _graph, _graph_key
     lat = config.CENTER_LAT if lat is None else lat
     lon = config.CENTER_LON if lon is None else lon
     # etwas größerer Radius als das Viertel, damit Randwege verbunden bleiben
     radius_m = (config.RADIUS_M + 200) if radius_m is None else radius_m
+    key = (round(lat, 3), round(lon, 3), radius_m)
+    if _graph is not None and _graph_key == key and not force:
+        return _graph
     _graph = build_graph(fetch_roads(lat, lon, radius_m, force=force))
+    _graph_key = key
     return _graph

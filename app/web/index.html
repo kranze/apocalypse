@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Wasteland — Weltsicht</title>
+  <title>Wasteland</title>
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -15,22 +15,13 @@
 <body>
   <div id="map"></div>
 
-  <div id="hud">
+  <!-- HUD (im Spiel) -->
+  <div id="hud" class="hidden">
     <h1>Wasteland</h1>
     <div class="row" id="clock">—</div>
     <div class="row cmdrow">
       <input id="cmd" type="text" placeholder="Was tust du?" autocomplete="off" />
       <button id="btn-cmd">Tu es</button>
-    </div>
-    <div class="needbar">
-      <label>Hunger</label>
-      <div class="bar"><span id="hunger-fill"></span></div>
-      <span id="hunger-val" class="val">—</span>
-    </div>
-    <div class="needbar">
-      <label>Leistung</label>
-      <div class="bar"><span id="perf-fill"></span></div>
-      <span id="perf-val" class="val">—</span>
     </div>
     <div class="row speedbar" id="speedbar">
       <button data-speed="0" class="active" title="Pause">⏸</button>
@@ -42,9 +33,17 @@
     </div>
     <div class="row buttons">
       <button id="btn-ff" title="bis zum nächsten Ereignis">⏭ Ereignis</button>
-      <button id="btn-eat">Essen</button>
-      <button id="btn-prep">Zubereiten</button>
+      <button id="btn-newgame" title="Neues Spiel beginnen">⟳ Neues Spiel</button>
     </div>
+
+    <h2>Zustand</h2>
+    <div class="row" id="who">—</div>
+    <div class="needbar"><label>Hunger</label><div class="bar"><span id="hunger-fill"></span></div><span id="hunger-val" class="val">—</span></div>
+    <div class="needbar"><label>Durst</label><div class="bar"><span id="thirst-fill"></span></div><span id="thirst-val" class="val">—</span></div>
+    <div class="needbar"><label>Schlaf</label><div class="bar"><span id="sleep-fill"></span></div><span id="sleep-val" class="val">—</span></div>
+    <div class="needbar"><label>Zufrieden</label><div class="bar"><span id="sat-fill"></span></div><span id="sat-val" class="val">—</span></div>
+    <div class="row needs" id="needs">—</div>
+
     <div class="row">
       <button id="btn-roster" class="toggle">▸ Gruppe</button>
       <span id="roster-count" class="count">1</span>
@@ -55,15 +54,52 @@
     <ul id="inventory"><li class="empty">leer</li></ul>
     <h2>Log</h2>
     <ul id="log"></ul>
-    <p class="hint">Karte klicken = laufen · Gebäude klicken = betreten/plündern</p>
+    <p class="hint">Karte klicken = laufen · Gebäude klicken = betreten · Tippen = handeln. Versorgung läuft automatisch.</p>
   </div>
 
+  <!-- Auswahl-Panel für angeklickte Locations -->
   <div id="panel" class="hidden">
     <button id="panel-close">✕</button>
     <h2 id="panel-title">—</h2>
     <div id="panel-meta"></div>
     <div id="panel-actions"></div>
     <ul id="panel-inv"></ul>
+  </div>
+
+  <!-- Onboarding -->
+  <div id="onboarding" class="overlay">
+    <div class="sheet">
+      <h1>Wer bist du?</h1>
+      <p class="sub">Bevor alles begann.</p>
+      <div class="form">
+        <label>Name<input id="f-name" type="text" /></label>
+        <label>Geburtsdatum<input id="f-birthdate" type="date" /></label>
+        <label>Geschlecht
+          <select id="f-sex"><option value="m">männlich</option><option value="f">weiblich</option><option value="x">divers</option></select>
+        </label>
+        <label>Größe (cm)<input id="f-height" type="number" min="100" max="230" value="178" /></label>
+        <label>Gewicht (kg)<input id="f-weight" type="number" min="30" max="250" value="78" /></label>
+        <label>Familie<input id="f-family" type="text" placeholder="z.B. verheiratet, 2 Kinder" /></label>
+        <label>Bildung<input id="f-education" type="text" placeholder="z.B. Studium Elektrotechnik" /></label>
+        <label>Beruf<input id="f-profession" type="text" placeholder="z.B. Elektriker, Arzt, Funkamateur" /></label>
+        <label>Hobbys<input id="f-hobbies" type="text" placeholder="z.B. Amateurfunk, Klettern" /></label>
+        <label class="wide">Adresse (Zuhause)<input id="f-address" type="text" placeholder="Straße Hausnr, Stadt" /></label>
+        <label class="wide">Über dich<textarea id="f-desc" rows="3" placeholder="Beschreibe dich selbst …"></textarea></label>
+        <details class="wide"><summary>Geocoding schlägt fehl? Koordinaten manuell</summary>
+          <div class="coords"><label>lat<input id="f-lat" type="number" step="any" /></label><label>lon<input id="f-lon" type="number" step="any" /></label></div>
+        </details>
+      </div>
+      <div id="onboard-error" class="err hidden"></div>
+      <button id="btn-start">Spiel starten</button>
+    </div>
+  </div>
+
+  <!-- Intro -->
+  <div id="intro" class="overlay hidden">
+    <div class="sheet narrow">
+      <pre id="intro-text"></pre>
+      <button id="btn-continue">Fortfahren</button>
+    </div>
   </div>
 
   <script

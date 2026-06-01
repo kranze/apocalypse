@@ -15,7 +15,9 @@ from pydantic import BaseModel
 
 from . import config, db
 from .osm import loader
-from .sim import adjudicator, constants, generation, kb, looting, movement, resources, tick
+from .sim import (
+    adjudicator, constants, game, generation, kb, looting, movement, resources, tick,
+)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -66,14 +68,32 @@ class OverrideRequest(BaseModel):
     character_id: int = 1
 
 
+class NewGameRequest(BaseModel):
+    name: str | None = None
+    birthdate: str | None = None      # ISO YYYY-MM-DD
+    sex: str | None = None            # m|f|x
+    height_cm: float | None = None
+    weight_kg: float | None = None
+    family: str | None = None
+    education: str | None = None
+    profession: str | None = None
+    hobbies: str | None = None
+    self_description: str | None = None
+    address: str | None = None
+    lat: float | None = None          # manueller Fallback
+    lon: float | None = None
+
+
 class LootRequest(BaseModel):
     group_id: int = 1
     items: dict[str, float] | None = None  # None = alles nehmen
 
 
 _CHARACTER_COLS = (
-    "id, name, type, group_id, lat, lon, hunger, thirst, sleep, injury, "
-    "exposure, performance, is_alive, daily_kcal, dest_lat, dest_lon, path_json"
+    "id, name, type, group_id, age, lat, lon, hunger, thirst, sleep, injury, "
+    "exposure, satisfaction, performance, is_alive, daily_kcal, daily_water_l, "
+    "birthdate, sex, height_cm, weight_kg, profession, education, family, hobbies, "
+    "self_description, home_lat, home_lon, dest_lat, dest_lon, path_json"
 )
 
 
@@ -157,6 +177,49 @@ def loot_location(location_id: int, req: LootRequest) -> dict:
     if not result["ok"]:
         raise HTTPException(status_code=404, detail=result["reason"])
     return result
+
+
+_CATEGORY_LABELS = {
+    "food": "Lebensmittel", "water": "Wasser", "tool": "Werkzeug",
+    "fuel": "Brennstoff", "medical": "Medizin", "material": "Material", "misc": "Kram",
+}
+
+
+@app.post("/locations/{location_id}/arrive")
+def location_arrive(location_id: int) -> dict:
+    """Ankunft an einem Ort: entdecken + kurze Claude-Geschichte zum Ort."""
+    from .llm import get_backend
+
+    conn = db.get_connection()
+    try:
+        loc = conn.execute(
+            "SELECT id, type, name FROM locations WHERE id = ?;", (location_id,)
+        ).fetchone()
+        if loc is None:
+            raise HTTPException(status_code=404, detail="no_such_location")
+        disc = generation.discover(conn, location_id)
+        cats = [
+            _CATEGORY_LABELS.get(r["category"], r["category"])
+            for r in conn.execute(
+                "SELECT DISTINCT ic.category FROM location_inventory li "
+                "JOIN item_catalog ic ON ic.id = li.item_id WHERE li.location_id = ?;",
+                (location_id,),
+            ).fetchall()
+        ]
+        summary = ", ".join(cats) if cats else "nichts Brauchbares"
+        prof = conn.execute(
+            "SELECT profession, hobbies, self_description FROM characters WHERE id = 1;"
+        ).fetchone()
+        narration = get_backend().narrate_location(
+            {"type": loc["type"], "name": loc["name"], "inventory_summary": summary},
+            dict(prof) if prof else None,
+        )
+    finally:
+        conn.close()
+    return {
+        "ok": True, "status": disc.get("status"), "narration": narration,
+        "inventory": disc.get("inventory", []),
+    }
 
 
 @app.get("/locations/{location_id}/inventory")
@@ -255,6 +318,24 @@ def character_move(character_id: int, req: MoveRequest) -> dict:
     if not result["ok"]:
         raise HTTPException(status_code=409, detail=result["reason"])
     return result
+
+
+@app.post("/game/new")
+def game_new(req: NewGameRequest) -> dict:
+    """Neues Spiel aus dem Onboarding-Profil (Geocoding -> Viertel -> Spieler)."""
+    conn = db.get_connection()
+    try:
+        result = game.new_game(conn, req.model_dump())
+    finally:
+        conn.close()
+    if not result["ok"]:
+        raise HTTPException(status_code=422, detail=result["reason"])
+    return result
+
+
+@app.get("/game/intro")
+def game_intro() -> dict:
+    return {"intro": game.INTRO}
 
 
 @app.get("/world/state")

@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from . import audit, biology, capabilities, constants, movement, resources
+from . import audit, biology, capabilities, constants, movement, provision, resources
 from .events import HALTING
 
 
@@ -40,8 +40,13 @@ def advance_tick(
         # Phase 2 — Ressourcen: Verderb (Verbrauch = explizites eat(), nicht hier)
         interrupts += resources.apply_decay(conn, t1)
 
-        # Phase 3 — Biologie: Bedürfnisse (inkl. Aktivität), Performance, Sterbe-Check
+        # Phase 3 — Biologie: Bedürfnis-Zerfall -> Auto-Versorgung -> Zufriedenheit
+        #            -> Performance -> Sterbe-Check
         interrupts += biology.apply_hunger(conn, minutes, t1, distances)
+        interrupts += biology.apply_thirst(conn, minutes, t1, distances)
+        interrupts += biology.apply_sleep(conn, minutes, t1)
+        interrupts += provision.auto_provision(conn, minutes, t1)
+        biology.recompute_satisfaction(conn, minutes)
         biology.recompute_performance(conn)
         interrupts += biology.death_check(conn, t1, minutes, seed)
 

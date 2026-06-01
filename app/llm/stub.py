@@ -77,6 +77,10 @@ class RuleBackend(LLMBackend):
         return proposal(effects=[{"op": match, "target": target}],
                         narration="Du machst dich daran.")
 
+    def narrate_location(self, location, profile=None) -> str:
+        name = location.get("name") or location.get("type") or "ein Ort"
+        return f"Du erreichst {name}. Es ist still. Du siehst dich um."
+
     def _target(self, t: str, context: dict[str, Any]) -> str | None:
         for word, loc_type in _LOCATION_SYNONYMS.items():
             if word in t:

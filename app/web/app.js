@@ -59,6 +59,7 @@ let selectedId = null;
 let speed = 0;          // 0 = Pause; sonst Spielminuten pro Frame
 let frameBusy = false;  // verhindert überlappende Tick-Requests
 const FRAME_MS = 1000;
+let lastPlayer = null;  // zuletzt bekannter Spielerzustand (für Ankunftserkennung)
 
 function log(msg, severity) {
   const ul = document.getElementById("log");
@@ -96,10 +97,17 @@ async function refreshState() {
   const p = s.player;
   if (p) {
     setBar("hunger-fill", "hunger-val", p.hunger);
-    setBar("perf-fill", "perf-val", p.performance);
+    setBar("thirst-fill", "thirst-val", p.thirst);
+    setBar("sleep-fill", "sleep-val", p.sleep);
+    setBar("sat-fill", "sat-val", p.satisfaction);
+    document.getElementById("who").textContent =
+      `${p.name}, ${p.age ?? "?"} J. · ${p.height_cm ?? "?"} cm · ${Math.round(p.weight_kg ?? 0)} kg`
+      + (p.is_alive ? "" : " · ✝ tot");
+    document.getElementById("needs").textContent =
+      `Bedarf: ${Math.round(p.daily_kcal)} kcal/Tag · ${p.daily_water_l} L/Tag`;
     if (p.lat != null && p.lon != null) movePlayerMarker(p.lat, p.lon);
     updateRoute(p);
-    document.getElementById("btn-eat").disabled = !p.is_alive;
+    lastPlayer = p;
   }
   await refreshInventory();
   if (!document.getElementById("roster-list").classList.contains("hidden")) {
@@ -190,12 +198,13 @@ async function selectLocation(id) {
   const inv = document.getElementById("panel-inv");
   inv.innerHTML = "";
 
-  if (loc.discovery_status === "undiscovered") {
-    const b = document.createElement("button");
-    b.textContent = "Betreten";
-    b.onclick = () => doDiscover(id);
-    actions.appendChild(b);
-  } else {
+  // „Gehe zu" ist immer möglich (setzt die Route; Entdeckung passiert bei Ankunft).
+  const go = document.createElement("button");
+  go.textContent = "Gehe zu";
+  go.onclick = () => doGoto(loc);
+  actions.appendChild(go);
+
+  if (loc.discovery_status !== "undiscovered") {
     const items = await getJSON(`/locations/${id}/inventory`);
     renderPanelInv(items);
     if (items.length) {
@@ -205,6 +214,33 @@ async function selectLocation(id) {
       actions.appendChild(b);
     }
   }
+}
+
+let pendingArrival = null;  // Location-id, zu der gerade gelaufen wird
+
+async function doGoto(loc) {
+  document.getElementById("panel").classList.add("hidden");
+  selectedId = null;
+  pendingArrival = loc.id;
+  await walkTo(loc.lat, loc.lon);
+  setSpeed(4); // automatisch hinlaufen
+}
+
+async function arriveAt(id) {
+  pendingArrival = null;
+  setSpeed(0);
+  try {
+    const r = await postJSON(`/locations/${id}/arrive`, {});
+    const loc = await getJSON(`/locations/${id}`);
+    updateLocation(loc);
+    await selectLocation(id); // Panel öffnen (jetzt entdeckt: Inventar + Plündern)
+    const meta = document.getElementById("panel-meta");
+    meta.innerHTML += `<div class="story">${r.narration || ""}</div>`;
+    log("» " + (r.narration || ""));
+    const input = document.getElementById("cmd");
+    input.placeholder = "Was willst du hier tun?";
+    input.focus();
+  } catch (e) { log("Fehler: " + e.message, "decision"); }
 }
 
 function renderPanelInv(items) {
@@ -319,6 +355,10 @@ async function tickFrame() {
       setSpeed(0); // bei Ereignis automatisch pausieren (DESIGN.md §4)
       reportInterrupts(halting);
     }
+    // Ankunft am Ziel-Gebäude -> Claude-Dialog zum Ort.
+    if (pendingArrival != null && lastPlayer && !lastPlayer.path_json) {
+      await arriveAt(pendingArrival);
+    }
   } catch (e) {
     setSpeed(0);
     log("Fehler: " + e.message, "decision");
@@ -335,15 +375,6 @@ async function doFastForward() {
     await refreshState();
     await refreshDiscoveredMarkers();
   } catch (e) { log("Fehler: " + e.message, "decision"); }
-}
-async function doEat() {
-  try {
-    const r = await postJSON(`/characters/${PLAYER_ID}/eat`, {});
-    log(`Gegessen: ${r.item} (+${r.kcal} kcal).`);
-    await refreshState();
-  } catch (e) {
-    log(e.message === "no_food" ? "Nichts (Essbares) im Rucksack." : "Fehler: " + e.message, "soft");
-  }
 }
 // Free-Text-Adjudikation; bei no_heat wird der nächste Input als Override-Begründung gewertet.
 let overrideCommand = null;
@@ -380,38 +411,27 @@ async function doCommand() {
   }
 }
 
-async function doPrepare() {
-  try {
-    const r = await postJSON(`/characters/${PLAYER_ID}/prepare`, {});
-    log(`Zubereitet: ${r.prepared} (aus ${r.from}, ${r.water_used} L Wasser).`);
-    await refreshInventory();
-  } catch (e) {
-    const msg = {
-      no_heat: "Keine Hitzequelle (Feuerholz fehlt).",
-      no_water: "Nicht genug Wasser.",
-      nothing_to_prepare: "Nichts zuzubereiten.",
-    }[e.message] || ("Fehler: " + e.message);
-    log(msg, "soft");
-  }
+// --- Onboarding / Intro / Start ---------------------------------------
+let _mapReady = false, _hudWired = false, _loopStarted = false;
+
+function buildMap(center) {
+  map = L.map("map", { zoomControl: true }).setView(center, 16);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, attribution: "© OpenStreetMap",
+  }).addTo(map);
+  map.on("click", (e) => walkTo(e.latlng.lat, e.latlng.lng));
+  _mapReady = true;
 }
 
-// --- Init --------------------------------------------------------------
-async function init() {
-  const info = await getJSON("/api/info");
-  map = L.map("map", { zoomControl: true }).setView(info.center, 16);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "© OpenStreetMap",
-  }).addTo(map);
-
-  map.on("click", (e) => walkTo(e.latlng.lat, e.latlng.lng));
-
+function wireHud() {
   for (const b of document.querySelectorAll("#speedbar button")) {
     b.onclick = () => setSpeed(Number(b.dataset.speed));
   }
   document.getElementById("btn-ff").onclick = doFastForward;
-  document.getElementById("btn-eat").onclick = doEat;
-  document.getElementById("btn-prep").onclick = doPrepare;
+  document.getElementById("btn-newgame").onclick = () => {
+    setSpeed(0); // Zeit anhalten, Erstellungs-Screen erneut zeigen
+    document.getElementById("onboarding").classList.remove("hidden");
+  };
   document.getElementById("btn-roster").onclick = toggleRoster;
   document.getElementById("btn-cmd").onclick = doCommand;
   document.getElementById("cmd").addEventListener("keydown", (e) => {
@@ -421,10 +441,70 @@ async function init() {
     document.getElementById("panel").classList.add("hidden");
     selectedId = null;
   };
-
-  await loadLocations();
-  await refreshState();
-  setInterval(tickFrame, FRAME_MS); // kontinuierlicher Zeitfluss (gesteuert über speed)
+  _hudWired = true;
 }
 
-init().catch((e) => log("Init-Fehler: " + e.message, "decision"));
+async function startGame(state) {
+  document.getElementById("onboarding").classList.add("hidden");
+  document.getElementById("intro").classList.add("hidden");
+  document.getElementById("hud").classList.remove("hidden");
+  const p = state && state.player;
+  const center = (p && p.lat != null) ? [p.lat, p.lon] : (await getJSON("/api/info")).center;
+  if (!_mapReady) buildMap(center); else map.setView(center, 16);
+  if (!_hudWired) wireHud();
+  await loadLocations();
+  await refreshState();
+  if (!_loopStarted) { setInterval(tickFrame, FRAME_MS); _loopStarted = true; }
+}
+
+function showIntro(text) {
+  document.getElementById("onboarding").classList.add("hidden");
+  document.getElementById("intro-text").textContent = text;
+  document.getElementById("intro").classList.remove("hidden");
+}
+
+async function submitOnboarding() {
+  const v = (id) => document.getElementById(id).value.trim();
+  const num = (id) => { const x = parseFloat(document.getElementById(id).value); return isNaN(x) ? null : x; };
+  const profile = {
+    name: v("f-name"), birthdate: v("f-birthdate") || null,
+    sex: document.getElementById("f-sex").value,
+    height_cm: num("f-height"), weight_kg: num("f-weight"),
+    family: v("f-family"), education: v("f-education"),
+    profession: v("f-profession"), hobbies: v("f-hobbies"),
+    self_description: v("f-desc"), address: v("f-address"),
+    lat: num("f-lat"), lon: num("f-lon"),
+  };
+  const errEl = document.getElementById("onboard-error");
+  errEl.classList.add("hidden");
+  const btn = document.getElementById("btn-start");
+  btn.disabled = true; btn.textContent = "Welt wird geladen …";
+  try {
+    const r = await postJSON("/game/new", profile);
+    showIntro(r.intro);
+  } catch (e) {
+    errEl.textContent = {
+      geocode_failed: "Adresse nicht gefunden — bitte Koordinaten manuell angeben (Abschnitt unten).",
+      osm_unavailable: "Kartendaten (OSM) gerade nicht erreichbar — bitte gleich nochmal versuchen.",
+    }[e.message] || ("Fehler: " + e.message);
+    errEl.classList.remove("hidden");
+  } finally {
+    btn.disabled = false; btn.textContent = "Spiel starten";
+  }
+}
+
+async function bootstrap() {
+  document.getElementById("btn-start").onclick = submitOnboarding;
+  document.getElementById("btn-continue").onclick = async () => {
+    const state = await getJSON("/world/state");
+    await startGame(state);
+  };
+  const state = await getJSON("/world/state").catch(() => null);
+  if (state && state.player && state.player.home_lat != null) {
+    await startGame(state); // laufendes Spiel fortsetzen
+  } else {
+    document.getElementById("onboarding").classList.remove("hidden");
+  }
+}
+
+bootstrap().catch((e) => log("Init-Fehler: " + e.message, "decision"));

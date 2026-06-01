@@ -51,6 +51,19 @@ _ADD_COLUMNS = (
     ("item_catalog", "needs_preparation", "INTEGER NOT NULL DEFAULT 0"),
     ("item_catalog", "requires_water_l", "REAL NOT NULL DEFAULT 0.0"),
     ("item_catalog", "prepared_into", "TEXT"),
+    # Onboarding-/Profil-Felder + abgeleitete Achsen.
+    ("characters", "birthdate", "TEXT"),
+    ("characters", "sex", "TEXT"),
+    ("characters", "height_cm", "REAL"),
+    ("characters", "profession", "TEXT"),
+    ("characters", "education", "TEXT"),
+    ("characters", "family", "TEXT"),
+    ("characters", "hobbies", "TEXT"),
+    ("characters", "self_description", "TEXT"),
+    ("characters", "home_lat", "REAL"),
+    ("characters", "home_lon", "REAL"),
+    ("characters", "satisfaction", "REAL NOT NULL DEFAULT 1.0"),
+    ("characters", "daily_water_l", "REAL NOT NULL DEFAULT 2.5"),
 )
 
 

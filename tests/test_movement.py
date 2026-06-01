@@ -221,7 +221,7 @@ class TestSetDestination:
         """set_destination liefert ok=True und speichert path_json."""
         import app.osm.roads as roads_module
         mock_graph = self._make_mock_graph()
-        monkeypatch.setattr(roads_module, "get_graph", lambda **kw: mock_graph)
+        monkeypatch.setattr(roads_module, "get_graph", lambda *a, **kw: mock_graph)
 
         conn.execute("UPDATE characters SET lat=0.0, lon=0.0 WHERE id=1;")
         conn.commit()
@@ -238,7 +238,7 @@ class TestSetDestination:
         """Charakter ohne Position → Fehler."""
         import app.osm.roads as roads_module
         mock_graph = self._make_mock_graph()
-        monkeypatch.setattr(roads_module, "get_graph", lambda **kw: mock_graph)
+        monkeypatch.setattr(roads_module, "get_graph", lambda *a, **kw: mock_graph)
 
         conn.execute("UPDATE characters SET lat=NULL, lon=NULL WHERE id=1;")
         conn.commit()
@@ -250,7 +250,7 @@ class TestSetDestination:
         """Toter Charakter → Fehler."""
         import app.osm.roads as roads_module
         mock_graph = self._make_mock_graph()
-        monkeypatch.setattr(roads_module, "get_graph", lambda **kw: mock_graph)
+        monkeypatch.setattr(roads_module, "get_graph", lambda *a, **kw: mock_graph)
 
         conn.execute("UPDATE characters SET is_alive=0, lat=0.0, lon=0.0 WHERE id=1;")
         conn.commit()
@@ -262,7 +262,7 @@ class TestSetDestination:
         """Gemeldete Distanz ist plausibel (> 0, < direkter Distanz * 2)."""
         import app.osm.roads as roads_module
         mock_graph = self._make_mock_graph()
-        monkeypatch.setattr(roads_module, "get_graph", lambda **kw: mock_graph)
+        monkeypatch.setattr(roads_module, "get_graph", lambda *a, **kw: mock_graph)
 
         conn.execute("UPDATE characters SET lat=0.0, lon=0.0 WHERE id=1;")
         conn.commit()

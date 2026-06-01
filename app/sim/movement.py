@@ -34,7 +34,8 @@ def set_destination(
     die verbleibenden Wegpunkte. Atomar."""
     with conn:
         char = conn.execute(
-            "SELECT id, lat, lon FROM characters WHERE id = ? AND is_alive = 1;",
+            "SELECT id, lat, lon, home_lat, home_lon FROM characters "
+            "WHERE id = ? AND is_alive = 1;",
             (character_id,),
         ).fetchone()
         if char is None:
@@ -42,7 +43,10 @@ def set_destination(
         if char["lat"] is None or char["lon"] is None:
             return {"ok": False, "reason": "no_position"}
 
-        graph = roads.get_graph()
+        # Graph an das Zuhause des Spielers binden (nicht ans Config-Zentrum).
+        anchor_lat = char["home_lat"] if char["home_lat"] is not None else char["lat"]
+        anchor_lon = char["home_lon"] if char["home_lon"] is not None else char["lon"]
+        graph = roads.get_graph(anchor_lat, anchor_lon)
         start = graph.nearest_node(char["lat"], char["lon"])
         goal = graph.nearest_node(lat, lon)
         if start is None or goal is None:

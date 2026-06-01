@@ -37,6 +37,10 @@ _SYSTEM = (
     "die der Kontext ein Rezept nennt.\n"
     "- advance_time{minutes}: Zeit verstreichen lassen\n"
     "- narrate: rein erzählerisch, kein Weltzustand betroffen\n"
+    "Berücksichtige das Profil des Charakters (Beruf, Bildung, Hobbys, "
+    "Selbstbeschreibung) bei der Machbarkeit: Fachwissen macht manches "
+    "plausibler (Elektriker → Strom, Funkamateur → Funk, Arzt → Behandlung), "
+    "fehlendes Wissen macht es riskanter.\n"
     "Erfinde keine Ressourcen/Ergebnisse — der Simulationskern prüft jede "
     "Vorbedingung und berechnet Folgen selbst. Behaupte NIE, dass etwas "
     "gefunden/erreicht wurde. Schreibe eine knappe, atmosphärische Narration auf "
@@ -117,6 +121,30 @@ class ClaudeBackend(LLMBackend):
         )
 
 
+    def narrate_location(self, location, profile=None) -> str:
+        sys = (
+            "Du erzählst knapp und atmosphärisch (2–3 Sätze) den ersten Eindruck "
+            "eines Ortes in einer verlassenen Endzeit-Welt, in der fast alle "
+            "Menschen friedlich gestorben sind. Keine Spielmechanik, keine Mengen, "
+            "kein Aufzählen von Gegenständen. Deutsch, zweite Person."
+        )
+        user = json.dumps({
+            "ort": {"typ": location.get("type"), "name": location.get("name")},
+            "grober_eindruck": location.get("inventory_summary"),
+            "person": profile,
+        }, ensure_ascii=False)
+        try:
+            resp = self._client.messages.create(
+                model=INTERPRET_MODEL, max_tokens=300,
+                system=[{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": user}],
+            )
+            parts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
+            return " ".join(parts).strip() or self._fallback.narrate_location(location, profile)
+        except Exception:
+            return self._fallback.narrate_location(location, profile)
+
+
 def _compact(context: dict[str, Any]) -> dict[str, Any]:
     return {
         "locations": [
@@ -131,4 +159,5 @@ def _compact(context: dict[str, Any]) -> dict[str, Any]:
         "capabilities": context.get("capabilities", []),
         "known_recipes": context.get("recipes", []),
         "providers": context.get("providers", {}),
+        "profile": context.get("profile"),
     }

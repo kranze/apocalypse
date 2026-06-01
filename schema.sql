@@ -115,6 +115,18 @@ CREATE TABLE characters (
     group_id        INTEGER REFERENCES groups(id),
     age             INTEGER,
     weight_kg       REAL DEFAULT 75.0,
+    -- Profil (Onboarding): treibt Bedarf (Größe/Geschlecht/Geburtsdatum) und
+    -- speist den Adjudikator (Beruf/Bildung/Hobbys/Selbstbeschreibung).
+    birthdate       TEXT,                       -- ISO; Alter = start_datetime - birthdate
+    sex             TEXT,                       -- m|f|x (für BMR)
+    height_cm       REAL,
+    profession      TEXT,
+    education       TEXT,
+    family          TEXT,
+    hobbies         TEXT,
+    self_description TEXT,
+    home_lat        REAL,                       -- wo der Spieler erwacht (Zuhause)
+    home_lon        REAL,
     -- Position in der Welt
     lat             REAL,
     lon             REAL,
@@ -125,11 +137,14 @@ CREATE TABLE characters (
     sleep           REAL NOT NULL DEFAULT 1.0,
     injury          REAL NOT NULL DEFAULT 1.0,  -- 1.0 = unverletzt
     exposure        REAL NOT NULL DEFAULT 1.0,
+    -- abgeleitete Achse: Zufriedenheit (aus Bedürfnis-Deckung + Komfort − Isolation)
+    satisfaction    REAL NOT NULL DEFAULT 1.0,
     -- abgeleitet: multiplikative Stapelung (DESIGN.md §5)
     performance     REAL NOT NULL DEFAULT 1.0,
     is_alive        INTEGER NOT NULL DEFAULT 1,
-    -- Tagesbedarf (für Verbrauch); Default ~2500 kcal
+    -- Tagesbedarf (für Verbrauch); Default ~2500 kcal / ~2.5 L Wasser
     daily_kcal      REAL NOT NULL DEFAULT 2500.0,
+    daily_water_l   REAL NOT NULL DEFAULT 2.5,
     -- Fuß-Routing: aktuelles Ziel + verbleibende Wegpunkte (JSON [[lat,lon],...]).
     -- NULL = steht still. Bewegung wird im Tick (Phase 1) abgelaufen.
     dest_lat        REAL,

@@ -32,7 +32,8 @@ def _dist(lat1, lon1, lat2, lon2) -> float:
 def build_context(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]:
     """Read-only „kuratiertes Optionen-Set": nur real Verfügbares."""
     char = conn.execute(
-        "SELECT id, group_id, lat, lon, hunger, performance, is_alive "
+        "SELECT id, group_id, lat, lon, hunger, performance, is_alive, "
+        "profession, education, hobbies, self_description "
         "FROM characters WHERE id = ?;",
         (character_id,),
     ).fetchone()
@@ -70,8 +71,15 @@ def build_context(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]
         ).fetchall()
     ]
     providers = {req: requirements.providers(conn, req) for req in _REQUIREMENTS}
+    profile = None
+    if char:
+        profile = {
+            "profession": char["profession"], "education": char["education"],
+            "hobbies": char["hobbies"], "self_description": char["self_description"],
+        }
     return {
         "player": dict(char) if char else None,
+        "profile": profile,
         "locations": locations[:25],
         "inventory": inventory,
         "capabilities": [

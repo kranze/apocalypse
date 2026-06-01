@@ -28,6 +28,11 @@ class LLMBackend:
     def interpret(self, text: str, context: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
+    def narrate_location(self, location: dict[str, Any], profile: dict | None = None) -> str:
+        """Kurze, atmosphärische Beschreibung eines erreichten Ortes (Flavor,
+        keine Mechanik). Default: leer."""
+        return ""
+
 
 def proposal(
     *, understanding="", feasibility="feasible", reason="", effects=None, narration=""

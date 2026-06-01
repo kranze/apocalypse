@@ -22,6 +22,23 @@ QUERY_VERSION = 1
 # Overpass weist den Default-python-requests-User-Agent ab (406). Eigener UA + Kontakt.
 _HEADERS = {"User-Agent": "Wasteland-Sim/0.1 (single-player survival sim; OSM loader)"}
 
+# Mirror-Fallback: der Haupt-Server (overpass-api.de) liefert bei schwereren
+# Queries gern 504/429. Bei Fehlern werden der Reihe nach Mirror probiert.
+_MIRRORS = (
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
+)
+
+
+def _endpoints() -> list[str]:
+    seen, out = set(), []
+    for url in (config.OVERPASS_URL, *_MIRRORS):
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
 
 def build_query(lat: float, lon: float, radius_m: int) -> str:
     """Overpass-QL: Gebäude (mit Geometrie) + relevante POI-Nodes im Umkreis."""
@@ -63,18 +80,23 @@ def fetch_query(
     if cache_file.exists() and not force:
         return json.loads(cache_file.read_text(encoding="utf-8"))
 
-    resp = requests.post(
-        config.OVERPASS_URL,
-        data={"data": query},
-        headers=_HEADERS,
-        timeout=config.OVERPASS_TIMEOUT_S + 10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    last_err: Exception | None = None
+    for url in _endpoints():
+        try:
+            resp = requests.post(
+                url, data={"data": query}, headers=_HEADERS,
+                timeout=config.OVERPASS_TIMEOUT_S + 10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:  # 504/429/Timeout -> nächster Mirror
+            last_err = e
+            continue
+        config.OSM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(data), encoding="utf-8")
+        return data
 
-    config.OSM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(json.dumps(data), encoding="utf-8")
-    return data
+    raise last_err if last_err else RuntimeError("Overpass: kein Endpoint erreichbar")
 
 
 def fetch(lat: float, lon: float, radius_m: int, *, force: bool = False) -> dict[str, Any]:

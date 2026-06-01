@@ -130,6 +130,7 @@ button:disabled { opacity: .4; cursor: default; }
   width: 26px; flex: none; padding: 2px;
 }
 #panel-inv li { font-size: 13px; }
+.story { margin-top: 8px; color: var(--accent); font-style: italic; line-height: 1.45; font-size: 13px; }
 
 .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 
@@ -160,3 +161,37 @@ button:disabled { opacity: .4; cursor: default; }
 .roster-row.dead { opacity: 0.5; }
 .roster-row .rname { font-weight: 600; }
 .roster-row .rstats { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.hidden { display: none !important; }
+.needs { font-size: 12px; color: var(--muted); }
+#who { font-size: 13px; }
+
+/* Overlays (Onboarding / Intro) */
+.overlay {
+  position: absolute; inset: 0; z-index: 2000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 12, 16, 0.92); backdrop-filter: blur(3px);
+  padding: 20px; overflow-y: auto;
+}
+.sheet {
+  width: 560px; max-width: 100%;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; padding: 22px;
+}
+.sheet.narrow { width: 460px; }
+.sheet h1 { margin: 0 0 2px; color: var(--accent); letter-spacing: 1px; }
+.sheet .sub { margin: 0 0 16px; color: var(--muted); }
+.form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.form label.wide { grid-column: 1 / -1; }
+.form input, .form select, .form textarea {
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 13px;
+}
+.form input:focus, .form select:focus, .form textarea:focus { outline: none; border-color: var(--accent2); }
+.form details.wide { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+.form .coords { display: flex; gap: 10px; margin-top: 6px; }
+.sheet button { margin-top: 16px; width: 100%; padding: 11px; font-size: 15px; background: var(--accent); color: #11150f; border: 0; border-radius: 8px; font-weight: 600; cursor: pointer; }
+.sheet button:hover { filter: brightness(1.08); }
+.err { margin-top: 12px; color: var(--crit); font-size: 13px; }
+#intro-text { white-space: pre-wrap; font-size: 15px; line-height: 1.6; color: var(--text); font-family: inherit; margin: 0; }
