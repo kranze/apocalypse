@@ -53,10 +53,12 @@ CREATE TABLE locations (
     id                  INTEGER PRIMARY KEY,
     osm_id              TEXT,                   -- Herkunft aus OSM
     type                TEXT NOT NULL,          -- house|supermarket|fuel_station|hardware|pharmacy|...
+    label               TEXT,                   -- dt. Anzeige-Label aus OSM-Tags (z.B. 'Einfamilienhaus')
     name                TEXT,
     lat                 REAL NOT NULL,
     lon                 REAL NOT NULL,
     footprint_m2        REAL,                   -- für prozedurale Grid-Größe
+    footprint_json      TEXT,                   -- Gebäude-Umriss [[lat,lon],...] (Anzeige/Highlight)
     -- Lazy Generation Steuerung:
     discovery_status    TEXT NOT NULL DEFAULT 'undiscovered', -- undiscovered|discovered|depleted
     discovered_at_tick  INTEGER,                -- NULL bis entdeckt
@@ -228,6 +230,32 @@ CREATE TABLE capabilities (
     upkeep          TEXT                        -- JSON: {item, per_tick}
 );
 CREATE INDEX idx_cap_active ON capabilities(active);
+
+-- ---------------------------------------------------------------------------
+-- DURCHSUCHTE BEGRIFFE je Location (Anti-Farming für die suchgetriebene Entdeckung)
+-- Pro (Ort, Suchbegriff) wird einmal gesucht; danach ist dort 'nichts mehr'.
+-- ---------------------------------------------------------------------------
+CREATE TABLE location_searches (
+    id              INTEGER PRIMARY KEY,
+    location_id     INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    term            TEXT NOT NULL,              -- normalisierter Suchbegriff
+    created_tick    INTEGER,
+    UNIQUE(location_id, term)
+);
+
+-- ---------------------------------------------------------------------------
+-- CHAT LOG (Adjudikator-Gedächtnis; nur Sim-Kern schreibt, DESIGN.md §8)
+-- Persistente Gesprächs-Historie pro Character für LLM-Kontext.
+-- ---------------------------------------------------------------------------
+CREATE TABLE chat_log (
+    id              INTEGER PRIMARY KEY,
+    character_id    INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+    turn            INTEGER NOT NULL,           -- fortlaufende Turns je Character (ab 1)
+    role            TEXT NOT NULL,              -- player|narrator|system
+    text            TEXT NOT NULL,
+    created_tick    INTEGER                     -- Welt-Tick bei Eintrag
+);
+CREATE INDEX idx_chat_log_char ON chat_log(character_id);
 
 INSERT INTO knowledge_base (topic, key, value, provenance, created_tick) VALUES
   ('provides:heat',        'firewood',    '{"consume": 1}', 'curated', 0),

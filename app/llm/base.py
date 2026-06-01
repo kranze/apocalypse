@@ -15,7 +15,7 @@ from typing import Any
 
 # Geschlossenes Ausführungs-Vokabular (muss zu sim/effects.OPS passen).
 EFFECT_OPS = (
-    "move_to", "discover", "transfer", "consume_food", "prepare",
+    "move_to", "discover", "transfer", "consume_food", "prepare", "search",
     "advance_time", "transform", "establish_capability", "narrate",
 )
 
@@ -28,10 +28,30 @@ class LLMBackend:
     def interpret(self, text: str, context: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
-    def narrate_location(self, location: dict[str, Any], profile: dict | None = None) -> str:
+    def narrate_location(
+        self,
+        location: dict[str, Any],
+        profile: dict | None = None,
+        history: list[dict] | None = None,
+    ) -> str:
         """Kurze, atmosphärische Beschreibung eines erreichten Ortes (Flavor,
-        keine Mechanik). Default: leer."""
+        keine Mechanik). ``history`` ist der jüngste Gesprächsverlauf
+        (aus ``chatlog.recent``); Default: None (rückwärtskompatibel)."""
         return ""
+
+    def search_item(
+        self,
+        query: str,
+        location: dict[str, Any],
+        profile: dict | None = None,
+        history: list[dict] | None = None,
+    ) -> dict[str, Any]:
+        """Beurteilt, ob ``query`` an diesem Ort plausibel zu finden ist, und
+        erfindet ggf. ein konkretes Item. Liefert {found, narration, item?},
+        item = {name, category, weight_kg, kcal_per_unit?, decay_halflife_min?,
+        quantity}. ``history`` ist optional (rückwärtskompatibel, Default None).
+        Default: nichts gefunden."""
+        return {"found": False, "narration": "", "item": None}
 
 
 def proposal(

@@ -36,21 +36,25 @@ function colorFor(type) {
   return TYPE_COLORS[type] || "#5b6675";
 }
 
+// Pfad-Stil (für Polygon-Footprints UND Punkt-Marker). Polygone bleiben dezent,
+// damit die OSM-Karte durchscheint, aber per Füllung klickbar.
 function styleFor(loc) {
   const c = colorFor(loc.type);
+  const poly = loc.footprint_json != null;
   if (loc.discovery_status === "undiscovered") {
-    return { radius: 5, color: c, weight: 1, fillColor: c, fillOpacity: 0.12 };
+    return { color: c, weight: 1, fillColor: c, fillOpacity: poly ? 0.12 : 0.15, radius: 5 };
   }
   if (loc.discovery_status === "depleted") {
-    return { radius: 5, color: "#444", weight: 1, fillColor: "#222", fillOpacity: 0.6 };
+    return { color: "#555", weight: 1, fillColor: "#333", fillOpacity: 0.5, radius: 5 };
   }
-  return { radius: 6, color: "#fff", weight: 1.5, fillColor: c, fillOpacity: 0.9 };
+  return { color: "#fff", weight: 1.5, fillColor: c, fillOpacity: poly ? 0.4 : 0.9, radius: 6 };
 }
 
 // --- Zustand -----------------------------------------------------------
 let map;
 let playerMarker;
 let routeLine = null;
+let highlightLayer = null;
 const markers = new Map(); // id -> L.circleMarker
 const locData = new Map(); // id -> location
 let selectedId = null;
@@ -61,13 +65,37 @@ let frameBusy = false;  // verhindert überlappende Tick-Requests
 const FRAME_MS = 1000;
 let lastPlayer = null;  // zuletzt bekannter Spielerzustand (für Ankunftserkennung)
 
+// Chatfenster ist die Haupt-I/O. role: "player" | "claude" | "system".
+function chat(role, text) {
+  if (!text) return;
+  const box = document.getElementById("chat");
+  if (!box) return;
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  box.appendChild(div);
+  while (box.children.length > 80) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+// log() bleibt als Alias für System-Zeilen (Ereignisse, Versorgung, Fehler).
 function log(msg, severity) {
-  const ul = document.getElementById("log");
-  const li = document.createElement("li");
-  li.textContent = msg;
-  if (severity) li.className = severity;
-  ul.prepend(li);
-  while (ul.children.length > 40) ul.removeChild(ul.lastChild);
+  chat("system", msg);
+}
+
+// Lädt den persistierten Chat-Verlauf und rendert ihn einmalig beim Start.
+// "narrator" aus dem chatlog wird auf die CSS-Klasse "claude" gemappt.
+let _chatHistoryLoaded = false;
+async function loadChatHistory() {
+  if (_chatHistoryLoaded) return;
+  _chatHistoryLoaded = true;
+  try {
+    const rows = await getJSON("/chat?character_id=1&limit=40");
+    for (const row of rows) {
+      const cssRole = row.role === "narrator" ? "claude" : row.role;
+      chat(cssRole, row.text);
+    }
+  } catch (e) { /* Verlauf nicht kritisch – still ignorieren */ }
 }
 
 // --- HUD ---------------------------------------------------------------
@@ -167,7 +195,14 @@ async function loadLocations() {
   const locs = await getJSON("/locations");
   for (const loc of locs) {
     locData.set(loc.id, loc);
-    const m = L.circleMarker([loc.lat, loc.lon], styleFor(loc));
+    let m;
+    if (loc.footprint_json) {
+      // Gebäude als Umriss-Polygon — Klick irgendwo darauf wählt es aus.
+      try { m = L.polygon(JSON.parse(loc.footprint_json), styleFor(loc)); }
+      catch (e) { m = L.circleMarker([loc.lat, loc.lon], styleFor(loc)); }
+    } else {
+      m = L.circleMarker([loc.lat, loc.lon], styleFor(loc)); // POI ohne Umriss
+    }
     m.on("click", (e) => { L.DomEvent.stopPropagation(e); selectLocation(loc.id); });
     m.addTo(map);
     markers.set(loc.id, m);
@@ -184,13 +219,16 @@ function updateLocation(loc) {
 // --- Auswahl-Panel -----------------------------------------------------
 async function selectLocation(id) {
   selectedId = id;
-  const loc = locData.get(id);
+  const loc = await getJSON(`/locations/${id}`); // voll inkl. footprint_json
+  highlightFootprint(loc);
   const panel = document.getElementById("panel");
   panel.classList.remove("hidden");
-  document.getElementById("panel-title").textContent = loc.name || loc.type;
+  const kind = loc.label || loc.type;
+  document.getElementById("panel-title").textContent = loc.name || kind;
   const dot = `<span class="legend-dot" style="background:${colorFor(loc.type)}"></span>`;
+  const statusDe = { undiscovered: "unerkundet", discovered: "erkundet", depleted: "geplündert" }[loc.discovery_status] || loc.discovery_status;
   document.getElementById("panel-meta").innerHTML =
-    `${dot}${loc.type} · ${loc.discovery_status}` +
+    `${dot}${kind} · ${statusDe}` +
     (loc.footprint_m2 ? ` · ${Math.round(loc.footprint_m2)} m²` : "");
 
   const actions = document.getElementById("panel-actions");
@@ -221,6 +259,7 @@ let pendingArrival = null;  // Location-id, zu der gerade gelaufen wird
 async function doGoto(loc) {
   document.getElementById("panel").classList.add("hidden");
   selectedId = null;
+  clearHighlight();
   pendingArrival = loc.id;
   await walkTo(loc.lat, loc.lon);
   setSpeed(4); // automatisch hinlaufen
@@ -233,12 +272,10 @@ async function arriveAt(id) {
     const r = await postJSON(`/locations/${id}/arrive`, {});
     const loc = await getJSON(`/locations/${id}`);
     updateLocation(loc);
-    await selectLocation(id); // Panel öffnen (jetzt entdeckt: Inventar + Plündern)
-    const meta = document.getElementById("panel-meta");
-    meta.innerHTML += `<div class="story">${r.narration || ""}</div>`;
-    log("» " + (r.narration || ""));
+    await selectLocation(id); // Panel öffnen (Typ/Status; Suche/Aktionen via Chat)
+    chat("claude", r.narration || "");
     const input = document.getElementById("cmd");
-    input.placeholder = "Was willst du hier tun?";
+    input.placeholder = "Was willst du hier tun? (z. B. ich suche …)";
     input.focus();
   } catch (e) { log("Fehler: " + e.message, "decision"); }
 }
@@ -273,7 +310,7 @@ async function doLoot(id) {
     const loc = await getJSON(`/locations/${id}`);
     updateLocation(loc);
     const n = Object.keys(r.transferred).length;
-    log(`Geplündert: ${loc.name || loc.type} (${n} Item-Arten) → ${r.status}.`);
+    log(`Geplündert: ${loc.name || loc.label || loc.type} (${n} Item-Arten) → ${r.status}.`);
     await selectLocation(id);
     await refreshInventory();
   } catch (e) { log("Fehler: " + e.message, "decision"); }
@@ -293,6 +330,24 @@ function movePlayerMarker(lat, lon) {
   } else {
     playerMarker.setLatLng([lat, lon]);
   }
+}
+
+function clearHighlight() {
+  if (highlightLayer) { map.removeLayer(highlightLayer); highlightLayer = null; }
+}
+
+function highlightFootprint(loc) {
+  clearHighlight();
+  const style = { color: "#ff6600", weight: 2, fillColor: "#ff8c1a", fillOpacity: 0.45 };
+  if (loc.footprint_json) {
+    try {
+      highlightLayer = L.polygon(JSON.parse(loc.footprint_json), style).addTo(map);
+      return;
+    } catch (e) { /* fällt auf Marker zurück */ }
+  }
+  // Kein Umriss (POI/Node): Punkt hervorheben.
+  highlightLayer = L.circleMarker([loc.lat, loc.lon],
+    { ...style, radius: 12, weight: 3 }).addTo(map);
 }
 
 function drawRoute(waypoints) {
@@ -383,14 +438,15 @@ async function doCommand() {
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
+  chat("player", text);
   try {
     const r = overrideCommand
       ? await postJSON("/adjudicate/override", { text: overrideCommand, reason: text })
       : await postJSON("/adjudicate", { text });
 
-    // Narration prominent; Ablehnungs-Hinweis ergänzend.
-    log("» " + (r.narration || ""), r.ok ? null : (r.feasibility === "too_complex" ? "decision" : "soft"));
-    if (!r.ok && r.hint) log(r.hint, "soft");
+    // Claudes Antwort als Chat-Blase; Ablehnungs-Hinweis als System-Zeile.
+    chat("claude", r.narration || "…");
+    if (!r.ok && r.hint) log(r.hint);
 
     if (r.escalate && r.reason === "no_heat") {
       overrideCommand = overrideCommand || text;
@@ -440,6 +496,7 @@ function wireHud() {
   document.getElementById("panel-close").onclick = () => {
     document.getElementById("panel").classList.add("hidden");
     selectedId = null;
+    clearHighlight();
   };
   _hudWired = true;
 }
@@ -452,6 +509,7 @@ async function startGame(state) {
   const center = (p && p.lat != null) ? [p.lat, p.lon] : (await getJSON("/api/info")).center;
   if (!_mapReady) buildMap(center); else map.setView(center, 16);
   if (!_hudWired) wireHud();
+  await loadChatHistory();
   await loadLocations();
   await refreshState();
   if (!_loopStarted) { setInterval(tickFrame, FRAME_MS); _loopStarted = true; }

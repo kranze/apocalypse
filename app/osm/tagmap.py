@@ -35,6 +35,45 @@ _BUILDING_HOUSE = {
 }
 
 
+# Deutsche Anzeige-Labels (Display), feiner als der mechanische `type`.
+_SHOP_LABEL = {
+    "supermarket": "Supermarkt", "convenience": "Kiosk",
+    "doityourself": "Baumarkt", "hardware": "Baumarkt", "trade": "Baumarkt",
+    "bakery": "Bäckerei", "butcher": "Metzgerei", "kiosk": "Kiosk",
+}
+_AMENITY_LABEL = {
+    "fuel": "Tankstelle", "pharmacy": "Apotheke", "hospital": "Krankenhaus",
+    "doctors": "Arztpraxis", "clinic": "Klinik",
+}
+_BUILDING_LABEL = {
+    "house": "Einfamilienhaus", "detached": "Einfamilienhaus",
+    "residential": "Wohnhaus", "apartments": "Mehrfamilienhaus",
+    "terrace": "Reihenhaus", "semidetached_house": "Doppelhaus",
+    "bungalow": "Bungalow", "commercial": "Geschäftshaus", "retail": "Geschäftshaus",
+    "industrial": "Industriegebäude", "warehouse": "Lagerhalle",
+    "garage": "Garage", "garages": "Garagen", "hut": "Hütte", "cabin": "Hütte",
+    "church": "Kirche", "chapel": "Kapelle", "school": "Schule",
+    "kindergarten": "Kindergarten", "hospital": "Krankenhaus", "yes": "Gebäude",
+}
+
+
+def label(tags: dict[str, str]) -> str | None:
+    """Deutsches Anzeige-Label aus OSM-Tags (z.B. 'Supermarkt', 'Einfamilienhaus').
+
+    Reihenfolge wie ``classify``: shop > amenity > building. Liefert None, wenn
+    nichts passt."""
+    shop = tags.get("shop")
+    if shop:
+        return _SHOP_LABEL.get(shop, "Geschäft")
+    amenity = tags.get("amenity")
+    if amenity and amenity in _AMENITY_LABEL:
+        return _AMENITY_LABEL[amenity]
+    building = tags.get("building")
+    if building:
+        return _BUILDING_LABEL.get(building, "Gebäude")
+    return None
+
+
 def classify(tags: dict[str, str]) -> str | None:
     """Bestimmt den Location-Typ aus OSM-Tags.
 

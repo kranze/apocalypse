@@ -25,9 +25,10 @@ _RULES: list[tuple[str, tuple[str, ...]]] = [
     ("establish_capability", ("ssid", "beacon", "funksignal", "signal senden",
                               "sende ein", "antenne", "funkmast", "über den mast",
                               "ueber den mast", "leuchtturm")),
+    ("search", ("such", "finde", "durchsuch", "schau nach", "gibt es hier", "kram", "stöber", "stoeber")),
     ("prepare", ("koch", "zubereit", "brat", "gar ", "gare")),
     ("consume_food", ("iss", "essen", "ess ", "futter", "mampf", "verzehr")),
-    ("transfer", ("plünder", "pluender", "durchsuch", "nimm", "raff", "räum", "loot")),
+    ("transfer", ("plünder", "pluender", "nimm", "raff", "räum", "loot", "einsammeln")),
     ("discover", ("betr", "geh rein", "geh in", "hinein", "rein", "öffne", "oeffne",
                   "erkund", "untersuch")),
     ("look", ("schau", "status", "umschau", "umsehen", "sieh", "betracht", "was ist hier")),
@@ -64,6 +65,9 @@ class RuleBackend(LLMBackend):
             return proposal(effects=[{"op": "consume_food"}], narration="Du isst etwas.")
         if match == "prepare":
             return proposal(effects=[{"op": "prepare"}], narration="Du bereitest etwas zu.")
+        if match == "search":
+            return proposal(effects=[{"op": "search", "query": text}],
+                            narration="Du durchsuchst die Umgebung.")
         if match == "establish_capability":
             return proposal(
                 feasibility="risky",
@@ -77,9 +81,33 @@ class RuleBackend(LLMBackend):
         return proposal(effects=[{"op": match, "target": target}],
                         narration="Du machst dich daran.")
 
-    def narrate_location(self, location, profile=None) -> str:
-        name = location.get("name") or location.get("type") or "ein Ort"
+    def narrate_location(self, location, profile=None, history=None) -> str:
+        name = location.get("name") or location.get("label") or location.get("type") or "ein Ort"
         return f"Du erreichst {name}. Es ist still. Du siehst dich um."
+
+    def search_item(self, query, location, profile=None, history=None) -> dict[str, Any]:
+        """Deterministische Plausibilitäts-Heuristik (kein Netz): Lebensmittel/
+        Wasser in versorgenden Orten, Elektronik/Werkzeug in Wohn-/Gebäuden."""
+        q = (query or "").lower()
+        loc_type = (location or {}).get("type", "")
+        supply = {"house", "building", "supermarket", "fuel_station", "hospital"}
+        indoors = {"house", "building", "supermarket", "hardware"}
+
+        def hit(name, category, weight, qty, kcal=None):
+            item = {"name": name, "category": category, "weight_kg": weight, "quantity": qty}
+            if kcal is not None:
+                item["kcal_per_unit"] = kcal
+            return {"found": True, "narration": f"Du findest: {name}.", "item": item}
+
+        if any(k in q for k in ("wasser", "trink", "getränk", "getraenk")) and loc_type in supply:
+            return hit("Wasserflasche 1L", "water", 1.0, 3)
+        if any(k in q for k in ("essen", "lebensmittel", "nahrung", "konserve", "futter")) and loc_type in supply:
+            return hit("Dose Eintopf", "food", 0.4, 4, kcal=350)
+        if any(k in q for k in ("fernseher", "tv", "radio", "laptop", "computer", "handy", "elektronik")) and loc_type in indoors:
+            return hit("alter Fernseher", "misc", 12.0, 1)
+        if any(k in q for k in ("werkzeug", "hammer", "schrauben", "zange", "kuhfuß")) and loc_type in indoors:
+            return hit("Werkzeugkiste", "tool", 3.0, 1)
+        return {"found": False, "narration": "Hier gibt es so etwas nicht.", "item": None}
 
     def _target(self, t: str, context: dict[str, Any]) -> str | None:
         for word, loc_type in _LOCATION_SYNONYMS.items():

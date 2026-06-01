@@ -35,12 +35,17 @@ def loot(
         if loc is None:
             return {"ok": False, "reason": "no_such_location"}
 
-        # Auto-Discover: betreten erzeugt das Inventar, falls noch nicht geschehen.
+        # Auto-Discover: betreten markiert nur (kein Auto-Inventar mehr —
+        # Inhalte entstehen durch Suche). Geplündert wird, was vor Ort liegt.
         if loc["discovery_status"] == "undiscovered":
             at_tick = conn.execute(
                 "SELECT tick FROM world WHERE id = 1;"
             ).fetchone()["tick"]
-            generation.materialize(conn, loc, at_tick)
+            conn.execute(
+                "UPDATE locations SET discovery_status = 'discovered', "
+                "discovered_at_tick = ? WHERE id = ?;",
+                (at_tick, location_id),
+            )
 
         inv = conn.execute(
             "SELECT id, item_id, quantity, quality, produced_tick "

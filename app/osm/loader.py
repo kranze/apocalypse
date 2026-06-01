@@ -29,16 +29,18 @@ def _generation_seed(world_seed: int, osm_id: str) -> int:
 
 
 _UPSERT = """
-INSERT INTO locations (osm_id, type, name, lat, lon, footprint_m2,
-                       generation_seed, discovery_status)
-VALUES (:osm_id, :type, :name, :lat, :lon, :footprint_m2,
-        :generation_seed, 'undiscovered')
+INSERT INTO locations (osm_id, type, label, name, lat, lon, footprint_m2,
+                       footprint_json, generation_seed, discovery_status)
+VALUES (:osm_id, :type, :label, :name, :lat, :lon, :footprint_m2,
+        :footprint_json, :generation_seed, 'undiscovered')
 ON CONFLICT(osm_id) DO UPDATE SET
-    type         = excluded.type,
-    name         = excluded.name,
-    lat          = excluded.lat,
-    lon          = excluded.lon,
-    footprint_m2 = excluded.footprint_m2
+    type           = excluded.type,
+    label          = excluded.label,
+    name           = excluded.name,
+    lat            = excluded.lat,
+    lon            = excluded.lon,
+    footprint_m2   = excluded.footprint_m2,
+    footprint_json = excluded.footprint_json
 ;
 """
 

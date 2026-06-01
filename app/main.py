@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from . import config, db
 from .osm import loader
 from .sim import (
-    adjudicator, constants, game, generation, kb, looting, movement, resources, tick,
+    adjudicator, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -98,7 +98,8 @@ _CHARACTER_COLS = (
 
 
 _LOCATION_COLS = (
-    "id, osm_id, type, name, lat, lon, footprint_m2, discovery_status"
+    "id, osm_id, type, label, name, lat, lon, footprint_m2, footprint_json, "
+    "discovery_status"
 )
 
 
@@ -193,33 +194,36 @@ def location_arrive(location_id: int) -> dict:
     conn = db.get_connection()
     try:
         loc = conn.execute(
-            "SELECT id, type, name FROM locations WHERE id = ?;", (location_id,)
+            "SELECT id, type, label, name FROM locations WHERE id = ?;", (location_id,)
         ).fetchone()
         if loc is None:
             raise HTTPException(status_code=404, detail="no_such_location")
-        disc = generation.discover(conn, location_id)
-        cats = [
-            _CATEGORY_LABELS.get(r["category"], r["category"])
-            for r in conn.execute(
-                "SELECT DISTINCT ic.category FROM location_inventory li "
-                "JOIN item_catalog ic ON ic.id = li.item_id WHERE li.location_id = ?;",
-                (location_id,),
-            ).fetchall()
-        ]
-        summary = ", ".join(cats) if cats else "nichts Brauchbares"
+        disc = generation.discover(conn, location_id)  # markiert nur (kein Auto-Loot)
         prof = conn.execute(
             "SELECT profession, hobbies, self_description FROM characters WHERE id = 1;"
         ).fetchone()
         narration = get_backend().narrate_location(
-            {"type": loc["type"], "name": loc["name"], "inventory_summary": summary},
+            {"type": loc["type"], "label": loc["label"], "name": loc["name"]},
             dict(prof) if prof else None,
         )
+        chatlog.append(conn, 1, "narrator", narration)
+        conn.commit()
     finally:
         conn.close()
     return {
         "ok": True, "status": disc.get("status"), "narration": narration,
         "inventory": disc.get("inventory", []),
     }
+
+
+@app.get("/chat")
+def get_chat(character_id: int = Query(1), limit: int = Query(40)) -> list[dict]:
+    """Gibt den Chat-Verlauf eines Characters zurück (chronologisch aufsteigend)."""
+    conn = db.get_connection()
+    try:
+        return chatlog.recent(conn, character_id, limit)
+    finally:
+        conn.close()
 
 
 @app.get("/locations/{location_id}/inventory")

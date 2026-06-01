@@ -103,10 +103,11 @@ button:disabled { opacity: .4; cursor: default; }
 #inventory li, #panel-inv li { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid var(--border); }
 #inventory .empty { color: var(--muted); border: 0; }
 
-#log { max-height: 140px; overflow-y: auto; }
-#log li { color: var(--muted); padding: 2px 0; font-size: 12px; line-height: 1.3; }
-#log li.soft { color: var(--warn); }
-#log li.decision { color: var(--crit); }
+#chat { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+.msg { font-size: 13px; line-height: 1.4; padding: 6px 9px; border-radius: 8px; max-width: 92%; white-space: pre-wrap; }
+.msg.player { align-self: flex-end; background: var(--accent2); color: #fff; }
+.msg.claude { align-self: flex-start; background: var(--panel2); border: 1px solid var(--border); color: var(--text); }
+.msg.system { align-self: center; background: transparent; color: var(--muted); font-size: 12px; font-style: italic; padding: 1px 0; }
 
 .hint { margin: 12px 0 0; font-size: 11px; color: var(--muted); line-height: 1.4; }
 

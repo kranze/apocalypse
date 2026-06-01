@@ -13,7 +13,7 @@ from typing import Any
 
 from .. import config
 from ..osm import geocode, loader, overpass, roads
-from . import biology, generation
+from . import biology, chatlog, generation
 
 INTRO = (
     "Du wachst auf. Es ist still — vollkommen still.\n"
@@ -88,6 +88,11 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
             profile.get("self_description"), lat, lon, lat, lon, daily_kcal, daily_water_l,
         ),
     )
+    conn.commit()
+
+    # 4b) Chat-Log zurücksetzen und Intro als erste Narrator-Zeile schreiben.
+    chatlog.clear(conn, 1)
+    chatlog.append(conn, 1, "narrator", INTRO)
     conn.commit()
 
     # 5) Zuhause (nächstgelegenes Gebäude) entdecken -> Vorrat verfügbar.

@@ -28,7 +28,9 @@ _SYSTEM = (
     "'too_complex'. 3) Schlage NUR Effekte aus diesem geschlossenen Vokabular vor:\n"
     "- move_to{target}: zu einem Ort gehen\n"
     "- discover{target}: ein nahes Gebäude betreten/erkunden\n"
-    "- transfer{target}: einen nahen Ort durchsuchen/plündern\n"
+    "- transfer{target}: an einem Ort bereits Gefundenes einsammeln/mitnehmen\n"
+    "- search{query}: an dem Ort, an dem man steht, gezielt nach etwas suchen "
+    "(z.B. 'Fernseher', 'Wasser', 'Werkzeug') — was es dort gibt, klärt der Kern\n"
     "- consume_food: etwas essen\n"
     "- prepare: ein rohes Lebensmittel zubereiten (braucht Hitze+Wasser)\n"
     "- transform{consume[],produce[],requires[]}: etwas herstellen/umbauen\n"
@@ -64,6 +66,7 @@ _TOOL = {
                     "properties": {
                         "op": {"type": "string", "enum": list(EFFECT_OPS)},
                         "target": {"type": ["string", "null"]},
+                        "query": {"type": ["string", "null"]},
                         "item": {"type": ["string", "null"]},
                         "ctype": {"type": ["string", "null"]},
                         "minutes": {"type": ["number", "null"]},
@@ -88,10 +91,44 @@ class ClaudeBackend(LLMBackend):
         self._fallback = RuleBackend()
 
     def interpret(self, text: str, context: dict[str, Any]) -> dict[str, Any]:
-        user = (
+        # Gesprächsverlauf als echte messages-Vorgeschichte voranstellen:
+        # player-Turns → role "user", narrator-Turns → role "assistant".
+        # system-Einträge werden als kurze user-Notiz eingebettet.
+        # Der System-Prompt (_SYSTEM) bleibt konstant für Prompt-Caching.
+        history_msgs: list[dict] = []
+        for turn in (context.get("history") or []):
+            role = turn.get("role", "")
+            t = turn.get("text", "")
+            if not t:
+                continue
+            if role == "player":
+                history_msgs.append({"role": "user", "content": t})
+            elif role == "narrator":
+                history_msgs.append({"role": "assistant", "content": t})
+            elif role == "system":
+                history_msgs.append({"role": "user", "content": f"[System: {t}]"})
+        # Anthropic erwartet alternierend user/assistant; bei mehreren gleichen
+        # Rollen in Folge das letzte behalten (kann durch system-Einbettung entstehen).
+        merged: list[dict] = []
+        for msg in history_msgs:
+            if merged and merged[-1]["role"] == msg["role"]:
+                merged[-1] = {"role": msg["role"],
+                               "content": merged[-1]["content"] + "\n" + msg["content"]}
+            else:
+                merged.append(msg)
+
+        user_msg = (
             f"Spieler-Eingabe: {text!r}\n\nKontext (nur reale Optionen):\n"
             + json.dumps(_compact(context), ensure_ascii=False)
         )
+        # Stellt sicher, dass die letzte Nachricht role=user ist.
+        if merged and merged[-1]["role"] == "user":
+            merged[-1] = {"role": "user",
+                           "content": merged[-1]["content"] + "\n\n" + user_msg}
+            messages = merged
+        else:
+            messages = merged + [{"role": "user", "content": user_msg}]
+
         try:
             resp = self._client.messages.create(
                 model=INTERPRET_MODEL,
@@ -100,7 +137,7 @@ class ClaudeBackend(LLMBackend):
                          "cache_control": {"type": "ephemeral"}}],
                 tools=[_TOOL],
                 tool_choice={"type": "tool", "name": _TOOL["name"]},
-                messages=[{"role": "user", "content": user}],
+                messages=messages,
             )
             out = next((b.input for b in resp.content if b.type == "tool_use"), None)
         except Exception:
@@ -121,15 +158,17 @@ class ClaudeBackend(LLMBackend):
         )
 
 
-    def narrate_location(self, location, profile=None) -> str:
+    def narrate_location(self, location, profile=None, history=None) -> str:
         sys = (
             "Du erzählst knapp und atmosphärisch (2–3 Sätze) den ersten Eindruck "
             "eines Ortes in einer verlassenen Endzeit-Welt, in der fast alle "
             "Menschen friedlich gestorben sind. Keine Spielmechanik, keine Mengen, "
             "kein Aufzählen von Gegenständen. Deutsch, zweite Person."
         )
-        user = json.dumps({
-            "ort": {"typ": location.get("type"), "name": location.get("name")},
+        history_block = _history_compact(history)
+        user = (history_block + "\n\n" if history_block else "") + json.dumps({
+            "ort": {"art": location.get("label") or location.get("type"),
+                    "name": location.get("name")},
             "grober_eindruck": location.get("inventory_summary"),
             "person": profile,
         }, ensure_ascii=False)
@@ -143,6 +182,89 @@ class ClaudeBackend(LLMBackend):
             return " ".join(parts).strip() or self._fallback.narrate_location(location, profile)
         except Exception:
             return self._fallback.narrate_location(location, profile)
+
+
+    def search_item(self, query, location, profile=None, history=None) -> dict[str, Any]:
+        sys = (
+            "Der Spieler durchsucht einen konkreten Ort einer Endzeit-Welt nach "
+            "etwas. Beurteile realistisch, ob sich das DORT finden ließe "
+            "(Fernseher im Einfamilienhaus: ja; im Schwimmbad: nein). Wenn ja, "
+            "erfinde EIN konkretes, plausibles Objekt (Marke/Modell wo sinnvoll), "
+            "passende Kategorie, Gewicht in kg, bei Lebensmitteln kcal je Einheit, "
+            "und eine realistische Stückzahl. Schreibe eine knappe deutsche "
+            "Narration. Findet sich nichts, found=false mit kurzer Begründung. "
+            "Antworte nur über das Werkzeug."
+        )
+        history_block = _history_compact(history)
+        user = (history_block + "\n\n" if history_block else "") + json.dumps({
+            "suche": query,
+            "ort": {"art": location.get("label") or location.get("type"),
+                    "name": location.get("name")},
+            "person": profile,
+        }, ensure_ascii=False)
+        try:
+            resp = self._client.messages.create(
+                model=INTERPRET_MODEL, max_tokens=400,
+                system=[{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}],
+                tools=[_FIND_TOOL],
+                tool_choice={"type": "tool", "name": _FIND_TOOL["name"]},
+                messages=[{"role": "user", "content": user}],
+            )
+            out = next((b.input for b in resp.content if b.type == "tool_use"), None)
+        except Exception:
+            return self._fallback.search_item(query, location, profile)
+        if not out:
+            return self._fallback.search_item(query, location, profile)
+        if not out.get("found"):
+            return {"found": False, "narration": out.get("narration", ""), "item": None}
+        it = out.get("item") or {}
+        return {"found": True, "narration": out.get("narration", ""), "item": {
+            "name": it.get("name"), "category": it.get("category"),
+            "weight_kg": it.get("weight_kg"), "kcal_per_unit": it.get("kcal_per_unit"),
+            "decay_halflife_min": it.get("decay_halflife_min"),
+            "quantity": it.get("quantity", 1),
+        }}
+
+
+_FIND_TOOL = {
+    "name": "report_find",
+    "description": "Plausibilitäts-Urteil + erfundenes Item für eine Suche.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "found": {"type": "boolean"},
+            "narration": {"type": "string"},
+            "item": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "category": {"type": "string",
+                                 "enum": ["food", "water", "tool", "material", "fuel", "medical", "misc"]},
+                    "weight_kg": {"type": "number"},
+                    "kcal_per_unit": {"type": ["number", "null"]},
+                    "decay_halflife_min": {"type": ["number", "null"]},
+                    "quantity": {"type": "number"},
+                },
+                "required": ["name", "category", "weight_kg", "quantity"],
+            },
+        },
+        "required": ["found", "narration"],
+    },
+}
+
+
+def _history_compact(history: list[dict] | None) -> str:
+    """Kompakte Zusammenfassung der Chat-History für User-Blöcke (search/narrate).
+
+    Liefert einen lesbaren „Bisher:"-Abschnitt oder einen leeren String, wenn
+    keine History übergeben wurde.
+    """
+    if not history:
+        return ""
+    lines = [f"- [{h['role']}] {h['text']}" for h in history if h.get("text")]
+    if not lines:
+        return ""
+    return "Bisher (älteste zuerst):\n" + "\n".join(lines)
 
 
 def _compact(context: dict[str, Any]) -> dict[str, Any]:

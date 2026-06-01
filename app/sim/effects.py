@@ -11,9 +11,12 @@ Vorbedingungen geprüft. Halluzinierte Ziele/Mengen werden abgelehnt.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import sqlite3
 from typing import Any
+
+from ..llm import get_backend
 
 from . import (
     capabilities,
@@ -27,9 +30,12 @@ from . import (
 )
 
 OPS = (
-    "move_to", "discover", "transfer", "consume_food", "prepare",
+    "move_to", "discover", "transfer", "consume_food", "prepare", "search",
     "advance_time", "transform", "establish_capability", "narrate",
 )
+
+_CATEGORIES = {"food", "water", "tool", "material", "fuel", "medical", "misc"}
+_SEARCH_REACH_M = 40.0  # man durchsucht den Ort, an dem man steht
 
 _M_PER_DEG_LAT = 111_320.0
 _LOCATION_TYPES = {
@@ -263,15 +269,118 @@ def ledger_add(conn, item_id, delta):
     ledger.add(conn, item_id, delta)
 
 
+# --- Suche: plausibilitäts-geprüfte, dynamische Entdeckung ---------------
+def _discovered_here(conn, player):
+    """Nächste ENTDECKTE Location, an der der Spieler steht (≤ Reichweite)."""
+    if not player or player.get("lat") is None:
+        return None
+    lat, lon = player["lat"], player["lon"]
+    best, best_d = None, _SEARCH_REACH_M
+    for r in conn.execute(
+        "SELECT id, type, label, name, lat, lon FROM locations "
+        "WHERE discovery_status != 'undiscovered';"
+    ).fetchall():
+        d = _dist(lat, lon, r["lat"], r["lon"])
+        if d <= best_d:
+            best, best_d = r, d
+    return best
+
+
+_STOPWORDS = {
+    "ich", "du", "wir", "suche", "suchen", "such", "finde", "finden", "durchsuche",
+    "durchsuchen", "nach", "mal", "nochmal", "noch", "einen", "eine", "einem",
+    "einer", "ein", "den", "dem", "der", "die", "das", "hier", "etwas", "ob",
+    "es", "gibt", "im", "in", "am", "an", "auf", "bitte", "würde", "gern", "mir",
+    "schau", "stöbere", "kram",
+}
+
+
+def _norm_term(query: str) -> str:
+    """Reduziert eine Such-Eingabe auf den Kern (Füllwörter raus) für das
+    Anti-Farming, damit 'wasser' == 'ich suche nochmal wasser'."""
+    words = [w for w in "".join(c if c.isalnum() else " " for c in (query or "").lower()).split()
+             if w not in _STOPWORDS]
+    return " ".join(words)[:60] or (query or "").lower()[:60]
+
+
+def _slugify(name: str) -> str:
+    base = "".join(c if c.isalnum() else "_" for c in (name or "item").lower()).strip("_")[:24]
+    h = hashlib.sha1((name or "item").encode("utf-8")).hexdigest()[:6]
+    return f"{(base or 'item')}_{h}"
+
+
+def _materialize_item(conn, item, now_tick) -> tuple[str, int]:
+    """Legt ein von Claude erfundenes Item geklemmt im Katalog an. Returnt
+    (item_id, menge)."""
+    cat = item.get("category") if item.get("category") in _CATEGORIES else "misc"
+    weight = min(100.0, max(0.01, float(item.get("weight_kg") or 1.0)))
+    qty = int(min(50, max(1, round(float(item.get("quantity") or 1)))))
+    kcal = item.get("kcal_per_unit") if cat == "food" else None
+    decay = item.get("decay_halflife_min")
+    item_id = _slugify(item.get("name") or "fund")
+    conn.execute(
+        "INSERT OR IGNORE INTO item_catalog (id, name, category, weight_kg, "
+        "kcal_per_unit, decay_halflife_min, stackable, needs_preparation, "
+        "requires_water_l, prepared_into) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0.0, NULL);",
+        (item_id, (item.get("name") or item_id)[:60], cat, weight, kcal, decay),
+    )
+    return item_id, qty
+
+
+def _v_search(conn, char, eff, ctx):
+    if not eff.get("query"):
+        return (False, "no_query")
+    if _discovered_here(conn, ctx["player"]) is None:
+        return (False, "no_location_here")
+    return (True, None)
+
+
+def _a_search(conn, char, eff, ctx):
+    loc = _discovered_here(conn, ctx["player"])
+    query = str(eff.get("query", "")).strip()
+    term = _norm_term(query)
+    now = conn.execute("SELECT tick FROM world WHERE id = 1;").fetchone()["tick"]
+
+    if conn.execute(
+        "SELECT 1 FROM location_searches WHERE location_id = ? AND term = ?;",
+        (loc["id"], term),
+    ).fetchone():
+        return {"ok": True, "found": False, "exhausted": True,
+                "narration": "Hier hast du danach schon gesucht — nichts mehr."}
+
+    res = get_backend().search_item(
+        query, {"type": loc["type"], "label": loc["label"], "name": loc["name"]},
+        ctx.get("profile"),
+    )
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO location_searches (location_id, term, created_tick) "
+            "VALUES (?, ?, ?);", (loc["id"], term, now),
+        )
+        if not res.get("found") or not res.get("item"):
+            return {"ok": True, "found": False,
+                    "narration": res.get("narration") or "Hier gibt es so etwas nicht."}
+        item_id, qty = _materialize_item(conn, res["item"], now)
+        conn.execute(
+            "INSERT INTO location_inventory (location_id, item_id, quantity, quality, "
+            "produced_tick) VALUES (?, ?, ?, 1.0, ?);",
+            (loc["id"], item_id, float(qty), now),
+        )
+        ledger_add(conn, item_id, float(qty))
+    return {"ok": True, "found": True, "item": item_id, "quantity": qty,
+            "location_id": loc["id"],
+            "narration": res.get("narration") or f"Du findest {res['item'].get('name')}."}
+
+
 _VALIDATORS = {
     "move_to": _v_move, "discover": _v_near, "transfer": _v_near,
-    "consume_food": _v_consume_food, "prepare": _v_prepare,
+    "consume_food": _v_consume_food, "prepare": _v_prepare, "search": _v_search,
     "advance_time": _v_advance_time, "transform": _v_transform,
     "establish_capability": _v_establish, "narrate": _v_narrate,
 }
 _APPLIERS = {
     "move_to": _a_move, "discover": _a_discover, "transfer": _a_transfer,
-    "consume_food": _a_consume_food, "prepare": _a_prepare,
+    "consume_food": _a_consume_food, "prepare": _a_prepare, "search": _a_search,
     "advance_time": _a_advance_time, "transform": _a_transform,
     "establish_capability": _a_establish, "narrate": _a_narrate,
 }

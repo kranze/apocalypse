@@ -17,7 +17,7 @@ import sqlite3
 from typing import Any
 
 from ..llm import get_backend
-from . import capabilities, effects, kb, requirements
+from . import capabilities, chatlog, effects, kb, requirements
 
 _M_PER_DEG_LAT = 111_320.0
 _CONTEXT_RADIUS_M = 400.0
@@ -88,6 +88,7 @@ def build_context(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]
         ],
         "recipes": recipe_keys,
         "providers": providers,
+        "history": chatlog.recent(conn, character_id, 16),
     }
 
 
@@ -102,33 +103,60 @@ def adjudicate(conn: sqlite3.Connection, character_id: int, text: str) -> dict[s
     understanding = p.get("understanding", "")
 
     if feas in ("too_complex", "impossible"):
-        return _verdict(False, understanding=understanding, feasibility=feas,
-                        narration=narration or "Das ist so nicht möglich.",
-                        reason=p.get("reason") or feas, escalate=True)
+        result = _verdict(False, understanding=understanding, feasibility=feas,
+                          narration=narration or "Das ist so nicht möglich.",
+                          reason=p.get("reason") or feas, escalate=True)
+        with conn:
+            chatlog.append(conn, character_id, "player", text)
+            chatlog.append(conn, character_id, "narrator", result["narration"])
+        return result
 
     proposed = p.get("effects", [])
     if not proposed:
         # Reine Erzählung ohne Weltzustands-Effekt.
-        return _verdict(True, understanding=understanding, feasibility=feas,
-                        narration=narration or "Du tust es.", effects_applied=[])
+        result = _verdict(True, understanding=understanding, feasibility=feas,
+                          narration=narration or "Du tust es.", effects_applied=[])
+        with conn:
+            chatlog.append(conn, character_id, "player", text)
+            chatlog.append(conn, character_id, "narrator", result["narration"])
+        return result
 
     ok, reason = effects.validate_all(conn, character_id, proposed, context)
     if not ok:
-        return _verdict(False, understanding=understanding, feasibility=feas,
-                        narration=narration, reason=reason, escalate=True,
-                        hint=_hint_for(reason))
+        result = _verdict(False, understanding=understanding, feasibility=feas,
+                          narration=narration, reason=reason, escalate=True,
+                          hint=_hint_for(reason))
+        with conn:
+            chatlog.append(conn, character_id, "player", text)
+            chatlog.append(conn, character_id, "narrator", result["narration"])
+        return result
 
     applied = effects.apply_all(conn, character_id, proposed, context)
+    # Narration der Effekte (z.B. Such-Ergebnis) übernimmt, wenn vorhanden.
+    eff_narr = " ".join(
+        a["result"]["narration"] for a in applied
+        if isinstance(a["result"], dict) and a["result"].get("narration")
+    ).strip()
+    final = eff_narr or narration or "Erledigt."
+
     # Soft-Fehler eines Appliers (z.B. eat ohne Essbares) sichtbar machen.
     soft_fail = next((a for a in applied
                       if isinstance(a["result"], dict) and a["result"].get("ok") is False), None)
     if soft_fail:
-        return _verdict(False, understanding=understanding, feasibility=feas,
-                        narration=narration, reason=soft_fail["result"].get("reason"),
-                        escalate=True, effects_applied=applied)
+        result = _verdict(False, understanding=understanding, feasibility=feas,
+                          narration=final or narration, reason=soft_fail["result"].get("reason"),
+                          escalate=True, effects_applied=applied)
+        with conn:
+            chatlog.append(conn, character_id, "player", text)
+            chatlog.append(conn, character_id, "narrator", result["narration"])
+        return result
 
-    return _verdict(True, understanding=understanding, feasibility=feas,
-                    narration=narration or "Erledigt.", effects_applied=applied)
+    result = _verdict(True, understanding=understanding, feasibility=feas,
+                      narration=final, effects_applied=applied)
+    with conn:
+        chatlog.append(conn, character_id, "player", text)
+        chatlog.append(conn, character_id, "narrator", result["narration"])
+    return result
 
 
 # --- Player-Override ----------------------------------------------------
@@ -149,6 +177,9 @@ def override(
                             narration="Womit genau? Ich erkenne keinen passenden "
                             "Gegenstand in deiner Begründung.")
         kb.add(conn, "provides:heat", item, {"consume": 1}, "player_verified", now_tick)
+    # adjudicate() schreibt den Spieler-Input (``text``) und die Narration
+    # bereits selbst ins chat_log — kein erneutes Schreiben hier, um
+    # Doppel-Einträge zu vermeiden.
     result = adjudicate(conn, character_id, text)
     result["override_learned"] = {"topic": "provides:heat", "key": item}
     return result

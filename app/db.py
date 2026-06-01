@@ -41,6 +41,14 @@ _MIGRATIONS = (
     " id INTEGER PRIMARY KEY, ctype TEXT NOT NULL, owner_group INTEGER,"
     " location_id INTEGER, params TEXT, active INTEGER NOT NULL DEFAULT 1,"
     " created_tick INTEGER, upkeep TEXT);",
+    "CREATE TABLE IF NOT EXISTS location_searches ("
+    " id INTEGER PRIMARY KEY,"
+    " location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,"
+    " term TEXT NOT NULL, created_tick INTEGER, UNIQUE(location_id, term));",
+    "CREATE TABLE IF NOT EXISTS chat_log ("
+    " id INTEGER PRIMARY KEY, character_id INTEGER NOT NULL"
+    " REFERENCES characters(id) ON DELETE CASCADE, turn INTEGER NOT NULL,"
+    " role TEXT NOT NULL, text TEXT NOT NULL, created_tick INTEGER);",
 )
 
 # (tabelle, spalte, DDL-Definition) — nur angelegt, wenn die Spalte fehlt.
@@ -51,6 +59,8 @@ _ADD_COLUMNS = (
     ("item_catalog", "needs_preparation", "INTEGER NOT NULL DEFAULT 0"),
     ("item_catalog", "requires_water_l", "REAL NOT NULL DEFAULT 0.0"),
     ("item_catalog", "prepared_into", "TEXT"),
+    ("locations", "label", "TEXT"),
+    ("locations", "footprint_json", "TEXT"),
     # Onboarding-/Profil-Felder + abgeleitete Achsen.
     ("characters", "birthdate", "TEXT"),
     ("characters", "sex", "TEXT"),

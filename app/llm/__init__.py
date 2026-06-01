@@ -28,7 +28,12 @@ def get_backend() -> LLMBackend:
     choice = os.environ.get("WASTELAND_LLM_BACKEND", "auto").lower()
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
-    if choice == "stub" or (choice == "auto" and not has_key):
+    if choice == "cli":
+        # Echtes Claude über die lokale CLI (kein API-Key nötig).
+        from .cli import CliBackend
+
+        _backend = CliBackend()
+    elif choice == "stub" or (choice == "auto" and not has_key):
         _backend = RuleBackend()
     else:
         # Lazy importieren, damit eine Stub-only-Installation kein anthropic braucht.

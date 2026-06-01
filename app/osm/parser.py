@@ -7,6 +7,7 @@ ohne Footprint aufgenommen.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from . import geometry, tagmap
@@ -46,10 +47,12 @@ def parse(data: dict[str, Any]) -> list[dict[str, Any]]:
         buildings[osm_id] = {
             "osm_id": osm_id,
             "type": loc_type,
+            "label": tagmap.label(tags) or "Gebäude",
             "name": _name(tags),
             "lat": lat,
             "lon": lon,
             "footprint_m2": round(geometry.area_m2(coords), 1),
+            "footprint_json": json.dumps([[la, lo] for la, lo in coords]),
         }
         building_geoms[osm_id] = coords
 
@@ -73,8 +76,9 @@ def parse(data: dict[str, Any]) -> list[dict[str, Any]]:
                 break
 
         if container is not None:
-            # Typ des Gebäudes präzisieren (POI ist spezifischer als der Fallback).
+            # Typ + Label des Gebäudes präzisieren (POI ist spezifischer).
             buildings[container]["type"] = poi_type
+            buildings[container]["label"] = tagmap.label(tags) or buildings[container]["label"]
             if not buildings[container].get("name"):
                 buildings[container]["name"] = _name(tags)
         else:
@@ -82,10 +86,12 @@ def parse(data: dict[str, Any]) -> list[dict[str, Any]]:
             standalone[osm_id] = {
                 "osm_id": osm_id,
                 "type": poi_type,
+                "label": tagmap.label(tags) or "Ort",
                 "name": _name(tags),
                 "lat": lat,
                 "lon": lon,
                 "footprint_m2": None,
+                "footprint_json": None,
             }
 
     return list(buildings.values()) + list(standalone.values())
