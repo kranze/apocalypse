@@ -47,6 +47,21 @@ NICHT in Scope (später):
 5. Interrupts sammeln
 Niemals Agenten/LLM parallel zur Welt-Berechnung — erst Welt fertig, dann reagieren.
 
+## ARBEITSWEISE: Orchestrieren, nicht selbst implementieren (Pflicht)
+Der Haupt-Claude (Opus) **orchestriert nur** und schont seinen Kontext. Echte
+Implementierungsarbeit wird **delegiert**:
+1. Jede nicht-triviale Aufgabe zuerst als **GitHub-Issue** anlegen (`gh issue
+   create`), klar abgegrenzt, mit Akzeptanzkriterien und betroffenen Dateien.
+2. Umsetzung an **dedizierte Sub-Agenten** geben — Modell nach Aufwand:
+   **Haiku** für mechanische/kleine Änderungen, **Sonnet** für normale Features
+   und Tests. Opus implementiert selbst nur in Ausnahmefällen.
+3. Der Haupt-Claude liest **nicht** ganze Dateien zum Selbst-Coden ein, sondern
+   gibt Agenten präzise Aufträge (Issue-Nummer, Dateien, Vertrag) und prüft nur
+   deren **Ergebnis** (Diff-Zusammenfassung, Tests grün, Issue schließen).
+4. Test-Agenten fassen ausschließlich `tests/` an, Implementierungs-Agenten nur
+   die im Auftrag genannten Dateien. Eisernes Prinzip gilt für alle.
+5. Parallele, unabhängige Aufträge in **einer** Nachricht starten (nebenläufig).
+
 ## Konventionen
 - Jede Ressourcen-Änderung läuft durch eine Sim-Kern-Funktion, nie inline.
 - Crafting/Transfer = DB-Transaktion (atomar, commit-or-rollback).

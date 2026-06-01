@@ -6,6 +6,9 @@ __pycache__/
 
 # Laufzeit-Daten (generiert: SQLite-DB + OSM-Cache) — nicht versionieren
 /data/
+*.db
+*.sqlite
+*.sqlite3
 
 # Secrets — niemals committen (z.B. ANTHROPIC_API_KEY)
 .env
