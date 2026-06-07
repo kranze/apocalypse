@@ -280,7 +280,7 @@ def list_characters() -> list[dict]:
     conn = db.get_connection()
     try:
         rows = conn.execute(
-            f"SELECT {_CHARACTER_COLS} FROM characters ORDER BY id;"
+            f"SELECT {_CHARACTER_COLS} FROM characters WHERE type = 'player' ORDER BY id;"
         ).fetchall()
     finally:
         conn.close()

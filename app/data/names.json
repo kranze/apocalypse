@@ -1,0 +1,78 @@
+{
+  "_comment": "Hand-curated first/last name pools by cultural cluster. See IDENTITY_DATA_SOURCE.md.",
+  "central_europe": {
+    "male": ["Lukas", "Felix", "Paul", "Jonas", "Maximilian", "Leon", "Noah", "Elias", "Finn", "Ben", "Tobias", "Philipp", "Julian", "Moritz", "Stefan", "Klaus", "Werner", "Günter", "Dieter", "Hans", "Jürgen", "Wolfgang", "Markus", "Andreas", "Peter", "Michael", "Thomas", "Martin", "Franz", "Georg"],
+    "female": ["Emma", "Hannah", "Mia", "Anna", "Lea", "Laura", "Lena", "Sarah", "Sophia", "Julia", "Maria", "Klara", "Eva", "Sabine", "Monika", "Ursula", "Ingrid", "Heike", "Birgit", "Karin", "Petra", "Angelika", "Christine", "Renate", "Elke", "Gabi", "Ute", "Brigitte", "Helga", "Ilse"],
+    "surnames": ["Müller", "Schmidt", "Schneider", "Fischer", "Weber", "Meyer", "Wagner", "Becker", "Schulz", "Hoffmann", "Schäfer", "Koch", "Bauer", "Richter", "Klein", "Wolf", "Schröder", "Neumann", "Zimmermann", "Braun", "Schwarz", "Krüger", "Hofmann", "Hartmann", "Lange", "Schmitt", "Werner", "Krause", "Meier", "Lehmann"]
+  },
+  "eastern_europe": {
+    "male": ["Aleksei", "Dmitri", "Ivan", "Nikolai", "Sergei", "Vladimir", "Andrei", "Pavel", "Mikhail", "Yuri", "Alexei", "Boris", "Viktor", "Roman", "Maksim", "Artem", "Danila", "Evgeny", "Oleg", "Piotr", "Vasily", "Grigory", "Stanislav", "Ruslan", "Timur", "Jakub", "Tomasz", "Marek", "Krzysztof", "Wojciech"],
+    "female": ["Anastasia", "Natalia", "Olga", "Irina", "Elena", "Svetlana", "Ekaterina", "Tatiana", "Anna", "Yulia", "Ksenia", "Polina", "Daria", "Alina", "Vera", "Ludmila", "Nadia", "Marina", "Sofia", "Veronika", "Agnieszka", "Katarzyna", "Magda", "Monika", "Joanna", "Ewelina", "Zuzanna", "Aleksandra", "Marta", "Beata"],
+    "surnames": ["Ivanov", "Petrov", "Sidorov", "Kozlov", "Novikov", "Sokolov", "Volkov", "Morozov", "Popov", "Lebedev", "Kowalski", "Wiśniewski", "Wójcik", "Kowalczyk", "Kamiński", "Lewandowski", "Zieliński", "Woźniak", "Szymański", "Dąbrowski", "Nowak", "Mazur", "Krawczyk", "Piotrowski", "Grabowski", "Nowakowski", "Pawlak", "Michalski", "Adamczyk", "Dudek"]
+  },
+  "british_isles": {
+    "male": ["Oliver", "Harry", "Jack", "George", "Noah", "Charlie", "James", "William", "Alfie", "Freddie", "Liam", "Ethan", "Archie", "Thomas", "Oscar", "Edward", "Henry", "Sebastian", "Patrick", "Declan", "Callum", "Angus", "Ewan", "Hamish", "Rupert", "Nigel", "Colin", "Gareth", "Ian", "Duncan"],
+    "female": ["Olivia", "Emily", "Isla", "Ava", "Ella", "Grace", "Amelia", "Sophie", "Lily", "Chloe", "Mia", "Isabella", "Charlotte", "Evie", "Jessica", "Poppy", "Freya", "Niamh", "Siobhan", "Aoife", "Caoimhe", "Fiona", "Morag", "Roisin", "Bridget", "Elspeth", "Imogen", "Harriet", "Phoebe", "Beatrice"],
+    "surnames": ["Smith", "Jones", "Williams", "Taylor", "Brown", "Davies", "Evans", "Wilson", "Thomas", "Roberts", "Johnson", "Lewis", "Walker", "Robinson", "Wood", "Thompson", "White", "Watson", "Jackson", "Wright", "Green", "Harris", "Cooper", "King", "Lee", "Martin", "Clarke", "Scott", "Turner", "Hill"]
+  },
+  "nordics": {
+    "male": ["Erik", "Lars", "Magnus", "Sven", "Bjorn", "Anders", "Johan", "Henrik", "Mikael", "Petter", "Kristoffer", "Andreas", "Tobias", "Mattias", "Oscar", "Lukas", "Nils", "Olof", "Axel", "Gustav", "Sigurd", "Leif", "Ragnar", "Harald", "Tor", "Gunnar", "Eirik", "Frode", "Mads", "Niels"],
+    "female": ["Astrid", "Ingrid", "Freya", "Sigrid", "Birgit", "Helga", "Karin", "Elin", "Maja", "Sara", "Emma", "Lena", "Anna", "Eva", "Ida", "Hanna", "Mia", "Frida", "Linnea", "Sofie", "Sigrid", "Ragna", "Thyra", "Gudrun", "Solvei", "Tone", "Turid", "Randi", "Unni", "Kirsten"],
+    "surnames": ["Andersen", "Hansen", "Nielsen", "Jensen", "Larsen", "Sørensen", "Petersen", "Christensen", "Johansen", "Olsen", "Karlsson", "Eriksson", "Lindqvist", "Svensson", "Magnusson", "Petersson", "Nilsson", "Johansson", "Berg", "Holm", "Strand", "Lund", "Dahl", "Borg", "Kvist", "Bjerg", "Moen", "Bakke", "Haug", "Lie"]
+  },
+  "iberia": {
+    "male": ["Carlos", "José", "Antonio", "Francisco", "Manuel", "David", "Javier", "Miguel", "Alejandro", "Daniel", "Pablo", "Pedro", "Juan", "Luis", "Sergio", "Andrés", "Álvaro", "Diego", "Rubén", "Alberto", "Rodrigo", "Gonçalo", "Tiago", "Nuno", "Rui", "Hugo", "João", "Marco", "Bruno", "Filipe"],
+    "female": ["María", "Carmen", "Ana", "Isabel", "Laura", "Lucía", "Marta", "Paula", "Sara", "Elena", "Rosa", "Pilar", "Cristina", "Sofía", "Nuria", "Beatriz", "Raquel", "Inés", "Teresa", "Silvia", "Ana", "Margarida", "Inês", "Sofia", "Catarina", "Filipa", "Joana", "Beatriz", "Leonor", "Rita"],
+    "surnames": ["García", "Martínez", "López", "Sánchez", "González", "Pérez", "Rodríguez", "Fernández", "Torres", "Ramírez", "Flores", "Moreno", "Jiménez", "Ruiz", "Díaz", "Álvarez", "Castro", "Romero", "Alves", "Ferreira", "Costa", "Pereira", "Carvalho", "Martins", "Rodrigues", "Santos", "Silva", "Sousa", "Oliveira", "Correia"]
+  },
+  "north_america": {
+    "male": ["James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph", "Thomas", "Christopher", "Daniel", "Matthew", "Anthony", "Mark", "Donald", "Steven", "Paul", "Andrew", "Joshua", "Kevin", "Brian", "George", "Kenneth", "Edward", "Ronald", "Timothy", "Jason", "Jeffrey", "Ryan", "Jacob"],
+    "female": ["Mary", "Patricia", "Jennifer", "Linda", "Barbara", "Elizabeth", "Susan", "Jessica", "Sarah", "Karen", "Lisa", "Nancy", "Betty", "Margaret", "Sandra", "Ashley", "Dorothy", "Kimberly", "Emily", "Donna", "Michelle", "Carol", "Amanda", "Melissa", "Deborah", "Stephanie", "Rebecca", "Sharon", "Laura", "Cynthia"],
+    "surnames": ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson"]
+  },
+  "latin_america": {
+    "male": ["José", "Juan", "Carlos", "Luis", "Jorge", "Miguel", "Antonio", "Alejandro", "Roberto", "Eduardo", "Ricardo", "Fernando", "Sergio", "Diego", "Andrés", "Pablo", "Felipe", "Rodrigo", "Gustavo", "Javier", "Ramón", "Rafael", "Enrique", "Gabriel", "Mauricio", "Hernán", "Cristóbal", "Sebastián", "Matías", "Agustín"],
+    "female": ["María", "Ana", "Carmen", "Rosa", "Isabel", "Francisca", "Gabriela", "Valentina", "Sofía", "Camila", "Daniela", "Fernanda", "Paola", "Claudia", "Marcela", "Verónica", "Alejandra", "Natalia", "Carolina", "Mónica", "Patricia", "Gloria", "Elena", "Sandra", "Silvia", "Adriana", "Viviana", "Beatriz", "Lorena", "Lucía"],
+    "surnames": ["García", "Rodríguez", "González", "López", "Martínez", "Hernández", "Pérez", "Sánchez", "Ramírez", "Torres", "Flores", "Rivera", "Gómez", "Díaz", "Cruz", "Morales", "Reyes", "Gutiérrez", "Ortiz", "Vásquez", "Mendoza", "Castro", "Vargas", "Ramos", "Rojas", "Ruiz", "Álvarez", "Medina", "Jiménez", "Ríos"]
+  },
+  "south_asia": {
+    "male": ["Arjun", "Raj", "Rahul", "Vikram", "Amit", "Suresh", "Ramesh", "Vijay", "Sanjay", "Rohit", "Aditya", "Kiran", "Deepak", "Manoj", "Ajay", "Anand", "Ravi", "Shankar", "Pradeep", "Dinesh", "Mohammad", "Ahmed", "Hassan", "Ali", "Imran", "Naveed", "Tariq", "Irfan", "Adil", "Zubair"],
+    "female": ["Priya", "Anjali", "Pooja", "Sunita", "Kavita", "Nisha", "Meena", "Rekha", "Seema", "Geeta", "Anita", "Shweta", "Ritu", "Divya", "Preeti", "Manisha", "Sushma", "Usha", "Lata", "Asha", "Fatima", "Ayesha", "Zainab", "Rukhsar", "Nadia", "Samina", "Rabia", "Sana", "Hina", "Bushra"],
+    "surnames": ["Sharma", "Patel", "Singh", "Kumar", "Gupta", "Mehta", "Shah", "Jain", "Agarwal", "Yadav", "Mishra", "Verma", "Tiwari", "Srivastava", "Pandey", "Dubey", "Joshi", "Chaudhary", "Rao", "Reddy", "Khan", "Ahmed", "Ali", "Hussain", "Malik", "Chaudhry", "Butt", "Siddiqui", "Sheikh", "Ansari"]
+  },
+  "east_asia": {
+    "male": ["Wei", "Hao", "Jian", "Ming", "Tao", "Feng", "Lei", "Gang", "Hui", "Jun", "Liang", "Chao", "Zheng", "Xiao", "Bo", "Long", "Peng", "Qiang", "Yang", "Yong", "Kenji", "Takeshi", "Hiroshi", "Yuki", "Daisuke", "Ryota", "Shota", "Naoki", "Kento", "Sota"],
+    "female": ["Lin", "Fang", "Ying", "Mei", "Xue", "Juan", "Na", "Yan", "Jing", "Li", "Hong", "Dan", "Hua", "Xia", "Fen", "Rong", "Zhen", "Qin", "Lan", "Yu", "Yuki", "Hana", "Haruka", "Sakura", "Misaki", "Aoi", "Rina", "Nana", "Yui", "Miku"],
+    "surnames": ["Wang", "Li", "Zhang", "Liu", "Chen", "Yang", "Huang", "Zhao", "Wu", "Zhou", "Xu", "Sun", "Ma", "Zhu", "Hu", "Guo", "He", "Lin", "Gao", "Luo", "Sato", "Suzuki", "Takahashi", "Tanaka", "Watanabe", "Ito", "Yamamoto", "Nakamura", "Kobayashi", "Kato"]
+  },
+  "southeast_asia": {
+    "male": ["Budi", "Andi", "Dedi", "Rudi", "Hendra", "Agus", "Bambang", "Wahyu", "Eko", "Rio", "Somchai", "Chai", "Nattawut", "Preecha", "Wichai", "Surawit", "Thana", "Krit", "Narong", "Panya", "Juan", "Pedro", "Jose", "Ramon", "Eduardo", "Nguyen", "Tran", "Le", "Pham", "Hoang"],
+    "female": ["Siti", "Dewi", "Sri", "Rina", "Yuni", "Wati", "Sari", "Rini", "Ani", "Nita", "Nok", "Aom", "Nuch", "Pim", "Fern", "Bow", "Kwan", "Pla", "Gam", "Joy", "Maria", "Ana", "Rosa", "Carmen", "Lucia", "Linh", "Lan", "Hoa", "Yen", "Mai"],
+    "surnames": ["Santoso", "Wijaya", "Kusuma", "Rahayu", "Sari", "Wati", "Putri", "Permata", "Surya", "Putra", "Wongsa", "Chaiwong", "Boonmee", "Srisuk", "Thongdee", "Santos", "Reyes", "Cruz", "Garcia", "Ramos", "Nguyen", "Tran", "Le", "Pham", "Vo", "Dinh", "Bui", "Do", "Ho", "Dao"]
+  },
+  "east_africa": {
+    "male": ["Amani", "Baraka", "Chukwudi", "Daudi", "Emmanuel", "Faruk", "Hassan", "Ibrahim", "John", "Kamau", "Luca", "Moses", "Nathan", "Obinna", "Patrick", "Rashid", "Samuel", "Titus", "Uche", "Victor", "Wycliffe", "Xavier", "Yusuf", "Zawadi", "Abel", "Bernard", "Charles", "Daniel", "Ernest", "Francis"],
+    "female": ["Amina", "Beatrice", "Ciku", "Dalila", "Elizabeth", "Fatuma", "Grace", "Hawa", "Irene", "Joyce", "Kadzo", "Leah", "Mary", "Nasrin", "Olive", "Pendo", "Rachel", "Sarah", "Tabitha", "Ummi", "Violet", "Wairimu", "Xenia", "Yasmin", "Zainab", "Agnes", "Bernadette", "Catherine", "Diana", "Edith"],
+    "surnames": ["Kamau", "Ochieng", "Wanjiku", "Otieno", "Njoroge", "Mwangi", "Kariuki", "Omondi", "Kiprotich", "Chebet", "Mugo", "Gitau", "Ndung'u", "Mbeki", "Nkosi", "Dlamini", "Khumalo", "Mokoena", "Mahlangu", "Sithole", "Mutombo", "Kabila", "Lumumba", "Nkrumah", "Diallo", "Traore", "Coulibaly", "Toure", "Camara", "Bah"]
+  },
+  "west_africa": {
+    "male": ["Kofi", "Kwame", "Yaw", "Kweku", "Koby", "Ama", "Kwasi", "Ebo", "Kojo", "Abena", "Chidi", "Emeka", "Femi", "Gbenga", "Ibrahim", "Jide", "Kunle", "Leke", "Musa", "Nnamdi", "Okechukwu", "Pius", "Rotimi", "Segun", "Tunde", "Uche", "Wale", "Yemi", "Zubair", "Abubakar"],
+    "female": ["Ama", "Abena", "Akua", "Adwoa", "Afia", "Efua", "Esi", "Abenaa", "Maame", "Akosua", "Chioma", "Adaeze", "Ngozi", "Amara", "Chiamaka", "Ifeoma", "Kemi", "Bimpe", "Funke", "Titi", "Sola", "Yetunde", "Folake", "Omowunmi", "Adunola", "Fatimah", "Hauwa", "Salamatu", "Maryam", "Hadiza"],
+    "surnames": ["Mensah", "Owusu", "Asante", "Boateng", "Agyei", "Adjei", "Antwi", "Frimpong", "Acheampong", "Osei", "Okonkwo", "Nwosu", "Adeyemi", "Adesanya", "Ogundimu", "Babatunde", "Eze", "Okafor", "Nwachukwu", "Chukwu", "Diallo", "Bah", "Camara", "Traore", "Toure", "Sylla", "Sow", "Barry", "Balde", "Kone"]
+  },
+  "middle_east": {
+    "male": ["Ahmed", "Mohammed", "Ali", "Hassan", "Hussein", "Ibrahim", "Khalid", "Mustafa", "Omar", "Yusuf", "Abdullah", "Abdul", "Mahmoud", "Samir", "Tariq", "Walid", "Nasser", "Kareem", "Faisal", "Rami", "David", "Yosef", "Moshe", "Avraham", "Yitzhak", "Yaakov", "Shlomo", "Meir", "Uri", "Noam"],
+    "female": ["Fatima", "Aisha", "Nour", "Sara", "Mariam", "Layla", "Hana", "Salma", "Rania", "Yasmin", "Zainab", "Amira", "Dina", "Heba", "Iman", "Jana", "Lama", "Mona", "Nadia", "Reham", "Sarah", "Miriam", "Tamar", "Rachel", "Leah", "Rivka", "Shira", "Naomi", "Ruth", "Efrat"],
+    "surnames": ["Al-Ahmad", "Al-Rashid", "Al-Hassan", "Al-Hussein", "Al-Khalil", "Al-Amin", "Al-Farsi", "Al-Qassim", "Al-Najjar", "Al-Mansour", "Cohen", "Levy", "Mizrahi", "Shapiro", "Katz", "Goldstein", "Friedman", "Rosenberg", "Haim", "Ben-David", "Nassar", "Haddad", "Khalil", "Mansour", "Azar", "Khoury", "Nasr", "Rahimi", "Sadeghi", "Hosseini"]
+  },
+  "oceania": {
+    "male": ["Liam", "Oliver", "Jack", "Noah", "William", "James", "Thomas", "Lucas", "Henry", "Ethan", "Jarrah", "Bodhi", "Koby", "Beau", "Archie", "Finn", "Kai", "Leo", "Milo", "Zac", "Rangi", "Tama", "Hemi", "Pita", "Te Koha", "Reweti", "Tipene", "Wiremu", "Hohepa", "Mere"],
+    "female": ["Charlotte", "Olivia", "Ava", "Amelia", "Mia", "Grace", "Isla", "Ella", "Sophie", "Zoe", "Billie", "Poppy", "Willow", "Evie", "Harriet", "Millie", "Frankie", "Indie", "Neve", "Piper", "Aroha", "Hine", "Marama", "Ngahuia", "Pare", "Roimata", "Tūāhu", "Waimārie", "Āwhina", "Hiriwa"],
+    "surnames": ["Smith", "Jones", "Williams", "Brown", "Taylor", "Wilson", "Anderson", "Thompson", "White", "Martin", "Walker", "Young", "Moore", "King", "Robinson", "Cooper", "Hill", "Clarke", "Baker", "Davies", "Tane", "Hemi", "Parata", "Ngata", "Tūhoe", "Ngāi Tahu", "Makea", "Pōhatu", "Ngarewa", "Hāpai"]
+  },
+  "unknown": {
+    "male": ["Alex", "Sam", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Jamie", "Quinn", "Reese", "Charlie", "Avery", "Blake", "Cameron", "Dakota", "Drew", "Elliot", "Frankie", "Harper", "Hunter"],
+    "female": ["Alex", "Sam", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Jamie", "Quinn", "Reese", "Charlie", "Avery", "Blake", "Cameron", "Dakota", "Drew", "Elliot", "Frankie", "Harper", "Hunter"],
+    "surnames": ["Smith", "Brown", "Jones", "Davis", "Wilson", "Miller", "Moore", "Taylor", "Anderson", "Thomas", "Jackson", "White", "Harris", "Martin", "Thompson", "Lee", "Walker", "Young", "Hall", "Allen"]
+  }
+}

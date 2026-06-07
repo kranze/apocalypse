@@ -1,0 +1,15 @@
+{
+  "_comment": "Global age distribution by bracket. Weights are relative (sum ~1.0). Loosely based on UN World Population Prospects 2022 global averages. See IDENTITY_DATA_SOURCE.md.",
+  "age_groups": [
+    {"range": [0, 9],   "weight": 0.12},
+    {"range": [10, 17], "weight": 0.10},
+    {"range": [18, 24], "weight": 0.10},
+    {"range": [25, 34], "weight": 0.16},
+    {"range": [35, 44], "weight": 0.14},
+    {"range": [45, 54], "weight": 0.12},
+    {"range": [55, 64], "weight": 0.10},
+    {"range": [65, 74], "weight": 0.08},
+    {"range": [75, 89], "weight": 0.06},
+    {"range": [90, 99], "weight": 0.02}
+  ]
+}

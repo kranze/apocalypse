@@ -12,6 +12,7 @@ import sqlite3
 from typing import Sequence
 
 from ..db import get_world_seed
+from .identity import generate_identity
 from .popgrid import load_grid
 
 
@@ -134,7 +135,14 @@ def materialize_in_bbox(
     if not rows:
         return []
 
-    at_tick = conn.execute("SELECT tick FROM world WHERE id = 1;").fetchone()["tick"]
+    # world_seed und start_datetime einmal laden, nicht je Survivor
+    world_row = conn.execute(
+        "SELECT tick, world_seed, start_datetime FROM world WHERE id = 1;"
+    ).fetchone()
+    at_tick = world_row["tick"]
+    world_seed = world_row["world_seed"]
+    start_datetime = world_row["start_datetime"]
+
     character_ids: list[int] = []
 
     for row in rows:
@@ -142,14 +150,30 @@ def materialize_in_bbox(
         s_lat = row["lat"]
         s_lon = row["lon"]
 
-        # Minimale NPC-Zeile – nur NOT-NULL-Pflichtfelder der characters-Tabelle
+        identity = generate_identity(
+            survivor_id=survivor_id,
+            lat=s_lat,
+            lon=s_lon,
+            world_seed=world_seed,
+            start_datetime=start_datetime,
+        )
+
+        # NPC-Zeile mit echter Identitaet aus generate_identity
         conn.execute(
             "INSERT INTO characters "
-            "(name, type, lat, lon, hunger, thirst, sleep, injury, exposure, "
+            "(name, sex, birthdate, profession, type, lat, lon, "
+            "hunger, thirst, sleep, injury, exposure, "
             "satisfaction, performance, is_alive, daily_kcal, daily_water_l) "
-            "VALUES (?, 'survivor', ?, ?, 1.0, 1.0, 1.0, 1.0, 1.0, "
+            "VALUES (?, ?, ?, ?, 'survivor', ?, ?, 1.0, 1.0, 1.0, 1.0, 1.0, "
             "1.0, 1.0, 1, 2000.0, 2.0);",
-            (f"Überlebende:r #{survivor_id}", s_lat, s_lon),
+            (
+                identity["name"],
+                identity["sex"],
+                identity["birthdate"],
+                identity["profession"],
+                s_lat,
+                s_lon,
+            ),
         )
         char_id = conn.execute("SELECT last_insert_rowid();").fetchone()[0]
         conn.execute(
