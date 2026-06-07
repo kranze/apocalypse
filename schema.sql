@@ -244,6 +244,19 @@ CREATE TABLE location_searches (
 );
 
 -- ---------------------------------------------------------------------------
+-- ÜBERLEBENDE (globale Verteilung; lazy Materialisierung zu NPC-Entitäten)
+-- 100.000 Punkte, seed-deterministisch aus pop_grid. Nur Sim-Kern schreibt.
+-- ---------------------------------------------------------------------------
+CREATE TABLE survivors (
+    id              INTEGER PRIMARY KEY,
+    lat             REAL    NOT NULL,
+    lon             REAL    NOT NULL,
+    materialized    INTEGER NOT NULL DEFAULT 0, -- 0 = leichter Punkt, 1 = NPC
+    character_id    INTEGER REFERENCES characters(id)
+);
+CREATE INDEX idx_survivors_geo ON survivors(lat, lon);
+
+-- ---------------------------------------------------------------------------
 -- CHAT LOG (Adjudikator-Gedächtnis; nur Sim-Kern schreibt, DESIGN.md §8)
 -- Persistente Gesprächs-Historie pro Character für LLM-Kontext.
 -- ---------------------------------------------------------------------------

@@ -30,6 +30,13 @@ def _schema_applied(conn: sqlite3.Connection) -> bool:
 # Leichtgewichtige Migrationen für bereits bestehende DBs (idempotent).
 # Tabellen via CREATE TABLE IF NOT EXISTS; Spalten via _ADD_COLUMNS (geprüft).
 _MIGRATIONS = (
+    "CREATE TABLE IF NOT EXISTS survivors ("
+    " id INTEGER PRIMARY KEY,"
+    " lat REAL NOT NULL,"
+    " lon REAL NOT NULL,"
+    " materialized INTEGER NOT NULL DEFAULT 0,"
+    " character_id INTEGER REFERENCES characters(id));",
+    "CREATE INDEX IF NOT EXISTS idx_survivors_geo ON survivors(lat, lon);",
     "CREATE TABLE IF NOT EXISTS resource_ledger ("
     " item_id TEXT PRIMARY KEY REFERENCES item_catalog(id),"
     " expected_total REAL NOT NULL DEFAULT 0.0);",

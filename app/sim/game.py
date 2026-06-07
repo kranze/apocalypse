@@ -13,7 +13,7 @@ from typing import Any
 
 from .. import config
 from ..osm import geocode, loader, overpass, roads
-from . import biology, chatlog, generation
+from . import biology, chatlog, generation, survivors
 
 INTRO = (
     "Du wachst auf. Es ist still — vollkommen still.\n"
@@ -60,7 +60,8 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
         "DELETE FROM location_inventory;", "DELETE FROM group_inventory;",
         "DELETE FROM resource_ledger;", "DELETE FROM events;",
         "DELETE FROM resource_audit;", "DELETE FROM capabilities;",
-        "DELETE FROM locations;", "UPDATE world SET tick = 0 WHERE id = 1;",
+        "DELETE FROM locations;", "DELETE FROM survivors;",
+        "UPDATE world SET tick = 0 WHERE id = 1;",
     ):
         conn.execute(stmt)
     conn.commit()
@@ -68,6 +69,18 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
     # 4) Viertel + Straßennetz laden (jetzt aus dem Cache, kein Netz mehr nötig).
     loader.load_area(lat, lon)
     roads.get_graph(lat, lon, radius_m=road_radius, force=True)
+
+    # 4a) Globale Überlebenden-Verteilung einmalig aufsetzen (seed muss stehen).
+    #     Dann die im geladenen Viertel liegenden lazy materialisieren.
+    survivors.spawn_survivors(conn)
+    radius_deg = config.RADIUS_M / 111_320.0
+    survivors.materialize_in_bbox(
+        conn,
+        min_lat=lat - radius_deg,
+        min_lon=lon - radius_deg,
+        max_lat=lat + radius_deg,
+        max_lon=lon + radius_deg,
+    )
 
     # 4) Spieler aus Profil erschaffen (id 1).
     start_dt = conn.execute("SELECT start_datetime FROM world WHERE id=1;").fetchone()["start_datetime"]
