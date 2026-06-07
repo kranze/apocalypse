@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Welt-Übersicht – Wasteland Debug</title>
+
+  <!-- Leaflet -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <!-- MarkerCluster CSS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+    crossorigin=""
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
+    crossorigin=""
+  />
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #111; color: #eee; display: flex; flex-direction: column; height: 100vh; }
+    #toolbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 14px; background: #1a1a1a; border-bottom: 1px solid #333; flex-shrink: 0;
+    }
+    #toolbar h1 { font-size: 1rem; white-space: nowrap; }
+    #status { font-size: 0.85rem; color: #aaa; }
+    #btn-spawn {
+      padding: 4px 12px; background: #e55; border: none; color: #fff;
+      border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+    }
+    #btn-spawn:hover { background: #c33; }
+    #back-link { font-size: 0.8rem; color: #888; text-decoration: none; margin-left: auto; }
+    #back-link:hover { color: #ccc; }
+    #map { flex: 1; }
+
+    #empty-notice {
+      position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+      z-index: 1000; background: rgba(30,30,30,0.95); border: 1px solid #555;
+      padding: 20px 28px; border-radius: 8px; text-align: center; max-width: 360px;
+    }
+    #empty-notice p { margin-bottom: 12px; line-height: 1.5; }
+    #btn-spawn-notice {
+      padding: 8px 20px; background: #e55; border: none; color: #fff;
+      border-radius: 4px; cursor: pointer; font-size: 1rem;
+    }
+    #btn-spawn-notice:hover { background: #c33; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<div id="toolbar">
+  <h1>🌍 Welt-Übersicht (Debug)</h1>
+  <span id="status">Lade…</span>
+  <a href="/" id="back-link">← Spiel</a>
+</div>
+
+<div id="map"></div>
+
+<div id="empty-notice" class="hidden">
+  <p>Die Tabelle <code>survivors</code> ist leer.<br>Lass 100.000 Überlebende spawnen?</p>
+  <button id="btn-spawn-notice">100.000 spawnen</button>
+</div>
+
+<!-- Leaflet JS -->
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin=""
+></script>
+<!-- Leaflet.heat -->
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js" crossorigin=""></script>
+<!-- Leaflet.markercluster -->
+<script
+  src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"
+  crossorigin=""
+></script>
+
+<script>
+(function () {
+  'use strict';
+
+  // --- Map setup ---
+  const map = L.map('map', { worldCopyJump: true }).setView([20, 10], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 19,
+  }).addTo(map);
+
+  // --- Layer holders ---
+  let heatLayer = null;
+  let clusterLayer = null;
+  let currentPoints = [];   // [[lat, lon], ...]
+  let currentData = [];     // full rows if we have id/materialized (future)
+
+  const ZOOM_THRESHOLD = 5;
+
+  function setStatus(text) {
+    document.getElementById('status').textContent = text;
+  }
+
+  // Build heatmap layer from points array [[lat,lon],...]
+  function buildHeatLayer(points) {
+    const heatPts = points.map(p => [p[0], p[1], 1]);
+    return L.heatLayer(heatPts, {
+      radius: 10,
+      blur: 8,
+      maxZoom: ZOOM_THRESHOLD,
+      gradient: { 0.2: '#00f', 0.5: '#0ff', 0.7: '#0f0', 0.85: '#ff0', 1.0: '#f00' },
+    });
+  }
+
+  // Build marker cluster layer from points array [[lat,lon],...]
+  function buildClusterLayer(points) {
+    const cluster = L.markerClusterGroup({ chunkedLoading: true, chunkInterval: 100 });
+    const markers = points.map((p, i) =>
+      L.marker([p[0], p[1]]).bindPopup(
+        `<b>Überlebende:r #${i + 1}</b><br>lat: ${p[0].toFixed(5)}<br>lon: ${p[1].toFixed(5)}`
+      )
+    );
+    cluster.addLayers(markers);
+    return cluster;
+  }
+
+  // Switch layers based on current zoom
+  function updateLayers() {
+    if (!currentPoints.length) return;
+    const zoom = map.getZoom();
+
+    if (zoom < ZOOM_THRESHOLD) {
+      // Show heatmap, hide cluster
+      if (clusterLayer && map.hasLayer(clusterLayer)) map.removeLayer(clusterLayer);
+      if (heatLayer && !map.hasLayer(heatLayer)) heatLayer.addTo(map);
+    } else {
+      // Show cluster, hide heatmap
+      if (heatLayer && map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
+      if (clusterLayer && !map.hasLayer(clusterLayer)) clusterLayer.addTo(map);
+    }
+  }
+
+  map.on('zoomend', updateLayers);
+
+  // Render data (called after load or spawn)
+  function renderPoints(points) {
+    // Remove old layers
+    if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+    if (clusterLayer) { map.removeLayer(clusterLayer); clusterLayer = null; }
+
+    currentPoints = points;
+
+    if (!points.length) return;
+
+    heatLayer = buildHeatLayer(points);
+    clusterLayer = buildClusterLayer(points);
+
+    updateLayers();
+    setStatus(`${points.length.toLocaleString('de-DE')} Überlebende`);
+  }
+
+  // Load survivors from API
+  async function loadSurvivors() {
+    setStatus('Lade…');
+    try {
+      const resp = await fetch('/survivors');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      document.getElementById('empty-notice').classList.toggle('hidden', data.count > 0);
+
+      if (data.count === 0) {
+        setStatus('Keine Überlebenden in der DB');
+        renderPoints([]);
+        return;
+      }
+
+      renderPoints(data.points);
+    } catch (err) {
+      setStatus('Fehler: ' + err.message);
+      console.error(err);
+    }
+  }
+
+  // Spawn survivors via debug endpoint
+  async function spawnSurvivors() {
+    setStatus('Spawne 100.000 Überlebende…');
+    document.getElementById('empty-notice').classList.add('hidden');
+    try {
+      const resp = await fetch('/debug/spawn-survivors', { method: 'POST' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      // Reload data
+      await loadSurvivors();
+    } catch (err) {
+      setStatus('Fehler beim Spawnen: ' + err.message);
+      console.error(err);
+    }
+  }
+
+  // Wire up spawn buttons
+  document.getElementById('btn-spawn-notice').addEventListener('click', spawnSurvivors);
+
+  // Initial load
+  loadSurvivors();
+})();
+</script>
+</body>
+</html>

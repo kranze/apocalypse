@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -18,6 +19,7 @@ from .osm import loader
 from .sim import (
     adjudicator, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
+from .sim import survivors as survivors_mod
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -385,6 +387,50 @@ def adjudicate_override(req: OverrideRequest) -> dict:
         return adjudicator.override(conn, req.character_id, req.text, req.reason)
     finally:
         conn.close()
+
+
+@app.get("/survivors")
+def list_survivors(materialized: int | None = Query(None)) -> dict:
+    """Gibt alle Überlebenden als kompaktes Punkt-Array zurück.
+
+    Format: {"count": N, "points": [[lat, lon], ...]}
+    Optional: ?materialized=1 filtert auf materialisierte Überlebende.
+    """
+    conn = db.get_connection()
+    try:
+        if materialized is not None:
+            rows = conn.execute(
+                "SELECT lat, lon FROM survivors WHERE materialized = ?;",
+                (materialized,),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT lat, lon FROM survivors;").fetchall()
+    finally:
+        conn.close()
+    points = [[row["lat"], row["lon"]] for row in rows]
+    return {"count": len(points), "points": points}
+
+
+# DEBUG: Spawn-Endpunkt – ruft Sim-Kern-Funktion auf (eisernes Prinzip gewahrt)
+@app.post("/debug/spawn-survivors")
+def debug_spawn_survivors() -> dict:
+    """[DEBUG] Verteilt 100.000 Überlebende deterministisch über die Welt.
+
+    Ruft spawn_survivors() aus dem Sim-Kern auf – kein direkter DB-Zugriff.
+    """
+    conn = db.get_connection()
+    try:
+        count = survivors_mod.spawn_survivors(conn)
+    finally:
+        conn.close()
+    return {"count": count}
+
+
+@app.get("/worldmap", response_class=FileResponse)
+def worldmap_page() -> FileResponse:
+    """Liefert die Debug-Weltkarte für Überlebende."""
+    path = WEB_DIR / "worldmap.html"
+    return FileResponse(str(path))
 
 
 @app.get("/kb")
