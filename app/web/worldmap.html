@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Welt-Übersicht – Wasteland Debug</title>
+  <title>Welt-Übersicht – Wasteland Debug v5</title>
 
   <!-- Leaflet -->
   <link
@@ -48,7 +48,6 @@
     #back-link { font-size: 0.8rem; color: #888; text-decoration: none; margin-left: auto; }
     #back-link:hover { color: #ccc; }
     #map { flex: 1; }
-
     #empty-notice {
       position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
       z-index: 1000; background: rgba(30,30,30,0.95); border: 1px solid #555;
@@ -110,7 +109,7 @@
   // --- Layer holders ---
   let heatLayer = null;
   let clusterLayer = null;
-  let currentPoints = [];   // [[lat, lon], ...] – alle Punkte im Speicher
+  let currentPoints = [];  // [[lat, lon, size], ...] – Entitäten (Einzelperson: size=1, Gruppe: size>=2)
 
   const ZOOM_THRESHOLD = 5;
 
@@ -126,12 +125,14 @@
     if (busy && label) setStatus(label);
   }
 
-  // Build heatmap layer from points array [[lat,lon],...]
+  // Build heatmap layer from points [[lat, lon, size], ...]; size = heat weight
   function buildHeatLayer(points) {
-    const heatPts = points.map(p => [p[0], p[1], 1]);
+    const maxSize = points.reduce((m, p) => Math.max(m, p[2]), 1);
+    const heatPts = points.map(p => [p[0], p[1], p[2]]);
     return L.heatLayer(heatPts, {
       radius: 10,
       blur: 8,
+      max: maxSize,
       maxZoom: ZOOM_THRESHOLD,
       gradient: { 0.2: '#00f', 0.5: '#0ff', 0.7: '#0f0', 0.85: '#ff0', 1.0: '#f00' },
     });
@@ -145,11 +146,13 @@
     if (!visible.length) return null;
 
     const cluster = L.markerClusterGroup({ chunkedLoading: true, chunkInterval: 100 });
-    const markers = visible.map(p =>
-      L.marker([p[0], p[1]]).bindPopup(
-        `<b>Überlebende:r</b><br>lat: ${p[0].toFixed(5)}<br>lon: ${p[1].toFixed(5)}`
-      )
-    );
+    const markers = visible.map(p => {
+      const size = p[2];
+      const popupText = size > 1
+        ? `Gruppe · ${size.toLocaleString('de-DE')} Mitglieder`
+        : 'Einzelperson';
+      return L.marker([p[0], p[1]]).bindPopup(popupText);
+    });
     cluster.addLayers(markers);
     return cluster;
   }
@@ -227,18 +230,14 @@
     return resp.json();
   }
 
-  // Load survivors (alive only) and redraw layers
+  // Load survivors as entities (alive only) and redraw layers
   async function loadAndRender() {
     const resp = await fetch('/survivors');
     if (!resp.ok) throw new Error(`/survivors HTTP ${resp.status}`);
     const data = await resp.json();
 
     document.getElementById('empty-notice').classList.toggle('hidden', data.count > 0);
-    if (data.count === 0) {
-      renderPoints([]);
-    } else {
-      renderPoints(data.points);
-    }
+    renderPoints(data.count > 0 ? data.points : []);
     return data;
   }
 

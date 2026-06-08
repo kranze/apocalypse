@@ -398,28 +398,42 @@ def list_survivors(
     materialized: int | None = Query(None),
     all: int | None = Query(None),
 ) -> dict:
-    """Gibt Überlebende als kompaktes Punkt-Array zurück.
+    """Gibt Überlebende als Entitäten zurück: Einzelpersonen + Gruppen-Zentroide.
 
-    Format: {"count": N, "points": [[lat, lon], ...]}
+    Format: {"count": N, "points": [[lat, lon, size], ...]}
+    size = 1 für Einzelpersonen, >= 2 für Gruppen (Anzahl Mitglieder).
     Standardmäßig nur lebende (alive=1). ?all=1 inkl. Toter.
     Optional: ?materialized=1 filtert auf materialisierte Überlebende.
     """
     conn = db.get_connection()
     try:
-        conditions = []
-        params: list = []
-        if all != 1:
-            conditions.append("alive = 1")
-        if materialized is not None:
-            conditions.append("materialized = ?")
-            params.append(materialized)
-        where = " WHERE " + " AND ".join(conditions) if conditions else ""
-        rows = conn.execute(
-            f"SELECT lat, lon FROM survivors{where};", params
+        alive_cond = "" if all == 1 else "alive = 1"
+        mat_cond = f"materialized = {1 if materialized == 1 else 0}" if materialized is not None else ""
+
+        extra = " AND ".join(c for c in [alive_cond, mat_cond] if c)
+        base_where = f"WHERE {extra}" if extra else ""
+
+        # Einzelpersonen (group_id IS NULL)
+        solo_where = base_where + (" AND " if base_where else "WHERE ") + "group_id IS NULL"
+        solo_rows = conn.execute(
+            f"SELECT lat, lon FROM survivors {solo_where};"
         ).fetchall()
+        points = [[row["lat"], row["lon"], 1] for row in solo_rows]
+
+        # Gruppen (group_id NOT NULL) -> Zentroid + Größe
+        group_where = base_where + (" AND " if base_where else "WHERE ") + "group_id IS NOT NULL"
+        group_rows = conn.execute(
+            f"""
+            SELECT AVG(lat) AS lat, AVG(lon) AS lon, COUNT(*) AS size
+            FROM survivors
+            {group_where}
+            GROUP BY group_id;
+            """
+        ).fetchall()
+        for row in group_rows:
+            points.append([row["lat"], row["lon"], row["size"]])
     finally:
         conn.close()
-    points = [[row["lat"], row["lon"]] for row in rows]
     return {"count": len(points), "points": points}
 
 
