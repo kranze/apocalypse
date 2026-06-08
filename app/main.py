@@ -20,6 +20,8 @@ from .sim import (
     adjudicator, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
 from .sim import survivor_sim, survivors as survivors_mod
+from .sim.identity import generate_identity
+from .sim.locale import region_for
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -400,8 +402,10 @@ def list_survivors(
 ) -> dict:
     """Gibt Überlebende als Entitäten zurück: Einzelpersonen + Gruppen-Zentroide.
 
-    Format: {"count": N, "points": [[lat, lon, size], ...]}
+    Format: {"count": N, "points": [[lat, lon, size, id, isGroup], ...]}
     size = 1 für Einzelpersonen, >= 2 für Gruppen (Anzahl Mitglieder).
+    id = survivor-id (Einzel) bzw. group_id (Gruppe).
+    isGroup = 0 (Einzelperson) oder 1 (Gruppe mit >= 2 Mitgliedern).
     Standardmäßig nur lebende (alive=1). ?all=1 inkl. Toter.
     Optional: ?materialized=1 filtert auf materialisierte Überlebende.
     """
@@ -416,25 +420,179 @@ def list_survivors(
         # Einzelpersonen (group_id IS NULL)
         solo_where = base_where + (" AND " if base_where else "WHERE ") + "group_id IS NULL"
         solo_rows = conn.execute(
-            f"SELECT lat, lon FROM survivors {solo_where};"
+            f"SELECT id, lat, lon FROM survivors {solo_where};"
         ).fetchall()
-        points = [[row["lat"], row["lon"], 1] for row in solo_rows]
+        points = [[row["lat"], row["lon"], 1, row["id"], 0] for row in solo_rows]
 
-        # Gruppen (group_id NOT NULL) -> Zentroid + Größe
+        # Gruppen (group_id NOT NULL) -> Zentroid + Größe; Größe-1-Gruppen als Einzel
         group_where = base_where + (" AND " if base_where else "WHERE ") + "group_id IS NOT NULL"
         group_rows = conn.execute(
             f"""
-            SELECT AVG(lat) AS lat, AVG(lon) AS lon, COUNT(*) AS size
+            SELECT group_id, AVG(lat) AS lat, AVG(lon) AS lon, COUNT(*) AS size
             FROM survivors
             {group_where}
             GROUP BY group_id;
             """
         ).fetchall()
         for row in group_rows:
-            points.append([row["lat"], row["lon"], row["size"]])
+            size = row["size"]
+            gid = row["group_id"]
+            if size >= 2:
+                # Echte Gruppe: id = group_id, isGroup = 1
+                points.append([row["lat"], row["lon"], size, gid, 1])
+            else:
+                # Größe-1-Gruppe: als Einzelperson behandeln – survivor-id ermitteln
+                solo = conn.execute(
+                    "SELECT id, lat, lon FROM survivors WHERE group_id = ? LIMIT 1;",
+                    (gid,),
+                ).fetchone()
+                if solo:
+                    points.append([solo["lat"], solo["lon"], 1, solo["id"], 0])
     finally:
         conn.close()
     return {"count": len(points), "points": points}
+
+
+@app.get("/survivor/{sid}")
+def get_survivor(sid: int) -> dict:
+    """Gibt die vollständige Identität einer Einzelperson zurück.
+
+    Liest lat/lon/sex/birth_tick aus der DB; Name/Beruf werden deterministisch
+    via generate_identity erzeugt (EISERNES PRINZIP: nie gespeichert).
+    """
+    conn = db.get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, lat, lon, sex, birth_tick, alive, group_id FROM survivors WHERE id = ?;",
+            (sid,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Survivor not found")
+
+        world = conn.execute(
+            "SELECT tick, world_seed, start_datetime FROM world WHERE id = 1;"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    world_seed = int(world["world_seed"]) if world is not None else config.WORLD_SEED
+    start_datetime = world["start_datetime"] if world is not None else "2026-09-01T06:00:00"
+    current_tick = int(world["tick"]) if world is not None else 0
+
+    # Alter aus birth_tick (Ticks = Minuten; 525600 min/Jahr)
+    birth_tick = row["birth_tick"] if row["birth_tick"] is not None else 0
+    age = round((current_tick - birth_tick) / 525_600)
+
+    # Identität deterministisch erzeugen, gespeichertes sex/Alter übernehmen
+    identity = generate_identity(sid, row["lat"], row["lon"], world_seed, start_datetime)
+    region = region_for(row["lat"], row["lon"])
+
+    return {
+        "id": row["id"],
+        "name": identity["name"],
+        "age": max(0, age),
+        "sex": row["sex"] if row["sex"] else identity["sex"],
+        "profession": identity["profession"],
+        "region": region,
+        "alive": bool(row["alive"]),
+        "group_id": row["group_id"],
+    }
+
+
+# Schlüsselwörter für den has_medical-Check (Stichprobe)
+_MEDICAL_KEYWORDS = frozenset(["nurse", "doctor", "physician", "pharmacist", "healthcare"])
+
+
+@app.get("/survivor-group/{gid}")
+def get_survivor_group(gid: int) -> dict:
+    """Gibt Aggregat-Daten und Beispiel-Mitglieder einer Überlebenden-Gruppe zurück.
+
+    Zusammensetzung (Kinder/Erwachsene/Senioren) und Geschlechter-Split werden
+    aus birth_tick berechnet (kein generate_identity nötig).
+    Identität wird NUR für bis zu 6 Beispiel-Mitglieder erzeugt.
+    has_medical: True wenn in der Stichprobe ein medizinischer Beruf vorkommt
+    (nur in der Stichprobe geprüft, klar dokumentiert).
+    """
+    conn = db.get_connection()
+    try:
+        members = conn.execute(
+            "SELECT id, lat, lon, sex, birth_tick FROM survivors "
+            "WHERE group_id = ? AND alive = 1;",
+            (gid,),
+        ).fetchall()
+        if not members:
+            raise HTTPException(status_code=404, detail="Group not found or empty")
+
+        world = conn.execute(
+            "SELECT tick, world_seed, start_datetime FROM world WHERE id = 1;"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    world_seed = int(world["world_seed"]) if world is not None else config.WORLD_SEED
+    start_datetime = world["start_datetime"] if world is not None else "2026-09-01T06:00:00"
+    current_tick = int(world["tick"]) if world is not None else 0
+
+    # Zusammensetzung aus birth_tick (kein generate_identity nötig)
+    children = 0    # < 13 Jahre
+    adults = 0      # 13–64 Jahre
+    seniors = 0     # >= 65 Jahre
+    males = 0
+    females = 0
+    others = 0
+
+    for m in members:
+        birth_tick = m["birth_tick"] if m["birth_tick"] is not None else 0
+        age = max(0, round((current_tick - birth_tick) / 525_600))
+        if age < 13:
+            children += 1
+        elif age < 65:
+            adults += 1
+        else:
+            seniors += 1
+
+        sex = m["sex"] or ""
+        if sex == "m":
+            males += 1
+        elif sex == "f":
+            females += 1
+        else:
+            others += 1
+
+    # Bis zu 6 Beispiel-Mitglieder mit Identität
+    sample = list(members[:6])
+    sample_out = []
+    has_medical = False
+
+    for m in sample:
+        birth_tick = m["birth_tick"] if m["birth_tick"] is not None else 0
+        age = max(0, round((current_tick - birth_tick) / 525_600))
+        identity = generate_identity(m["id"], m["lat"], m["lon"], world_seed, start_datetime)
+
+        profession = identity["profession"]
+        if any(kw in profession.lower() for kw in _MEDICAL_KEYWORDS):
+            has_medical = True
+
+        sample_out.append({
+            "id": m["id"],
+            "name": identity["name"],
+            "age": age,
+            "profession": profession,
+        })
+
+    return {
+        "group_id": gid,
+        "size": len(members),
+        "composition": {
+            "children": children,
+            "adults": adults,
+            "seniors": seniors,
+        },
+        "sex_split": {"m": males, "f": females, "x": others},
+        "sample_members": sample_out,
+        "has_medical": has_medical,
+        # Hinweis: has_medical nur aus der Stichprobe (max. 6 Mitglieder) geprüft
+    }
 
 
 @app.get("/survivors/stats")

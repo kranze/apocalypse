@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Welt-Übersicht – Wasteland Debug v5</title>
+  <title>Welt-Übersicht – Wasteland Debug v6</title>
 
   <!-- Leaflet -->
   <link
@@ -109,7 +109,7 @@
   // --- Layer holders ---
   let heatLayer = null;
   let clusterLayer = null;
-  let currentPoints = [];  // [[lat, lon, size], ...] – Entitäten (Einzelperson: size=1, Gruppe: size>=2)
+  let currentPoints = [];  // [[lat, lon, size, id, isGroup], ...] – Entitäten (Einzelperson: size=1, isGroup=0; Gruppe: size>=2, isGroup=1)
 
   const ZOOM_THRESHOLD = 5;
 
@@ -125,7 +125,7 @@
     if (busy && label) setStatus(label);
   }
 
-  // Build heatmap layer from points [[lat, lon, size], ...]; size = heat weight
+  // Build heatmap layer from points [[lat, lon, size, ...], ...]; size = heat weight
   function buildHeatLayer(points) {
     const maxSize = points.reduce((m, p) => Math.max(m, p[2]), 1);
     const heatPts = points.map(p => [p[0], p[1], p[2]]);
@@ -138,6 +138,39 @@
     });
   }
 
+  // Füllt ein Popup asynchron mit echten Details vom Backend
+  async function fillPopup(marker, entityId, isGroup) {
+    const url = isGroup ? `/survivor-group/${entityId}` : `/survivor/${entityId}`;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const d = await resp.json();
+
+      let html;
+      if (!isGroup) {
+        // Einzelperson
+        const sexLabel = d.sex === 'm' ? 'm' : d.sex === 'f' ? 'f' : 'x';
+        html = `<strong>${d.name}</strong><br>${d.age} J., ${sexLabel}, ${d.profession}<br><em>${d.region}</em>`;
+      } else {
+        // Gruppe
+        const c = d.composition;
+        const s = d.sex_split;
+        const sampleLines = d.sample_members
+          .map(m => `• ${m.name}, ${m.age} J., ${m.profession}`)
+          .join('<br>');
+        const medLine = d.has_medical ? '<br>🩺 <em>medizinisch dabei</em>' : '';
+        html =
+          `<strong>Gruppe · ${d.size.toLocaleString('de-DE')} Mitglieder</strong><br>` +
+          `Kinder ${c.children} · Erwachsene ${c.adults} · Senioren ${c.seniors} · ` +
+          `(${s.m}m / ${s.f}f)<br>` +
+          sampleLines + medLine;
+      }
+      marker.setPopupContent(html);
+    } catch (err) {
+      marker.setPopupContent('Fehler beim Laden: ' + err.message);
+    }
+  }
+
   // Build marker cluster layer ONLY for points within the current viewport
   function buildClusterForViewport() {
     if (!currentPoints.length) return null;
@@ -147,11 +180,15 @@
 
     const cluster = L.markerClusterGroup({ chunkedLoading: true, chunkInterval: 100 });
     const markers = visible.map(p => {
-      const size = p[2];
-      const popupText = size > 1
-        ? `Gruppe · ${size.toLocaleString('de-DE')} Mitglieder`
-        : 'Einzelperson';
-      return L.marker([p[0], p[1]]).bindPopup(popupText);
+      // p = [lat, lon, size, id, isGroup]
+      const [lat, lon, size, entityId, isGroup] = p;
+      const marker = L.marker([lat, lon]);
+      // Popup zunächst mit Platzhalter; bei Öffnen Details laden
+      marker.bindPopup('Lade…');
+      marker.on('popupopen', () => {
+        fillPopup(marker, entityId, isGroup === 1);
+      });
+      return marker;
     });
     cluster.addLayers(markers);
     return cluster;
