@@ -19,7 +19,7 @@ from .osm import loader
 from .sim import (
     adjudicator, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
-from .sim import survivors as survivors_mod
+from .sim import survivor_sim, survivors as survivors_mod
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -389,26 +389,53 @@ def adjudicate_override(req: OverrideRequest) -> dict:
         conn.close()
 
 
+class SimulateDaysRequest(BaseModel):
+    days: int = 1
+
+
 @app.get("/survivors")
-def list_survivors(materialized: int | None = Query(None)) -> dict:
-    """Gibt alle Überlebenden als kompaktes Punkt-Array zurück.
+def list_survivors(
+    materialized: int | None = Query(None),
+    all: int | None = Query(None),
+) -> dict:
+    """Gibt Überlebende als kompaktes Punkt-Array zurück.
 
     Format: {"count": N, "points": [[lat, lon], ...]}
+    Standardmäßig nur lebende (alive=1). ?all=1 inkl. Toter.
     Optional: ?materialized=1 filtert auf materialisierte Überlebende.
     """
     conn = db.get_connection()
     try:
+        conditions = []
+        params: list = []
+        if all != 1:
+            conditions.append("alive = 1")
         if materialized is not None:
-            rows = conn.execute(
-                "SELECT lat, lon FROM survivors WHERE materialized = ?;",
-                (materialized,),
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT lat, lon FROM survivors;").fetchall()
+            conditions.append("materialized = ?")
+            params.append(materialized)
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        rows = conn.execute(
+            f"SELECT lat, lon FROM survivors{where};", params
+        ).fetchall()
     finally:
         conn.close()
     points = [[row["lat"], row["lon"]] for row in rows]
     return {"count": len(points), "points": points}
+
+
+@app.get("/survivors/stats")
+def survivors_stats() -> dict:
+    """Populationsstatistik: alive, dead, groups, grouped, alone + aktueller Tag."""
+    conn = db.get_connection()
+    try:
+        stats = survivor_sim.population_stats(conn)
+        row = conn.execute(
+            "SELECT survivor_sim_day FROM world WHERE id = 1;"
+        ).fetchone()
+        day = int(row["survivor_sim_day"]) if row is not None else 0
+    finally:
+        conn.close()
+    return {"day": day, **stats}
 
 
 # DEBUG: Spawn-Endpunkt – ruft Sim-Kern-Funktion auf (eisernes Prinzip gewahrt)
@@ -417,13 +444,56 @@ def debug_spawn_survivors() -> dict:
     """[DEBUG] Verteilt 100.000 Überlebende deterministisch über die Welt.
 
     Ruft spawn_survivors() aus dem Sim-Kern auf – kein direkter DB-Zugriff.
+    Setzt survivor_sim_day auf 0 zurück (Reset-Semantik).
     """
     conn = db.get_connection()
     try:
-        count = survivors_mod.spawn_survivors(conn)
+        count = survivors_mod.spawn_survivors(conn, force=True)
+        conn.execute("UPDATE world SET survivor_sim_day = 0 WHERE id = 1;")
+        conn.commit()
     finally:
         conn.close()
     return {"count": count}
+
+
+@app.post("/debug/simulate-days")
+def debug_simulate_days(
+    req: SimulateDaysRequest | None = None,
+    days: int = Query(1),
+) -> dict:
+    """[DEBUG] Simuliert N Tage Survivor-Bewegung/-Sterben (max 30 pro Aufruf).
+
+    Ruft survivor_sim.step_day() für jeden neuen Tag auf und schreibt
+    world.tick + world.survivor_sim_day konsistent fort.
+    Verändert den gemeinsamen Weltzustand – Debug-Werkzeug.
+    """
+    n_days = (req.days if req is not None else days)
+    n_days = max(1, min(30, n_days))  # clamp 1..30
+
+    conn = db.get_connection()
+    try:
+        world = conn.execute(
+            "SELECT tick, survivor_sim_day FROM world WHERE id = 1;"
+        ).fetchone()
+        last_sim_day: int = world["survivor_sim_day"] if world["survivor_sim_day"] is not None else 0
+
+        # Pro Tag committen (kurze Locks), damit parallele Reads nicht blockieren.
+        for i in range(n_days):
+            next_day = last_sim_day + 1 + i
+            new_tick = next_day * constants.MINUTES_PER_DAY
+            with conn:
+                conn.execute("UPDATE world SET tick = ? WHERE id = 1;", (new_tick,))
+                # step_day setzt survivor_sim_day selbst am Ende
+                survivor_sim.step_day(conn, next_day)
+
+        stats = survivor_sim.population_stats(conn)
+        row = conn.execute(
+            "SELECT survivor_sim_day FROM world WHERE id = 1;"
+        ).fetchone()
+        day = int(row["survivor_sim_day"]) if row is not None else 0
+    finally:
+        conn.close()
+    return {"days_simulated": n_days, "day": day, **stats}
 
 
 @app.get("/worldmap", response_class=FileResponse)

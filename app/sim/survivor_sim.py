@@ -156,32 +156,19 @@ def _gradient_at(
 
 
 # ---------------------------------------------------------------------------
-# Spatial-Grid für Gruppenbildung
+# O(n) Gruppenbildung via Union-Find über Gitterzellen
 # ---------------------------------------------------------------------------
-
-def _spatial_buckets(
-    lats: np.ndarray, lons: np.ndarray, bucket_deg: float
-) -> dict[tuple[int, int], list[int]]:
-    """Verteilt N Punkte in Zellen-Hash-Buckets."""
-    buckets: dict[tuple[int, int], list[int]] = {}
-    for i in range(len(lats)):
-        key = (int(math.floor(lats[i] / bucket_deg)), int(math.floor(lons[i] / bucket_deg)))
-        buckets.setdefault(key, []).append(i)
-    return buckets
-
-
-def _haversine_km_vec(
-    lat1: np.ndarray, lon1: np.ndarray, lat2: float, lon2: float
-) -> np.ndarray:
-    """Haversine-Distanz in km von N Punkten zu einem Punkt."""
-    R = 6371.0
-    phi1 = np.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = np.radians(lat2 - lat1)
-    dlam = np.radians(lon2 - lon1)
-    a = np.sin(dphi / 2) ** 2 + np.cos(phi1) * math.cos(phi2) * np.sin(dlam / 2) ** 2
-    return R * 2 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
-
+# Approximation: Jeder lebende Survivor wird einer feinen Gitterzelle mit
+# Kantenlänge ≈ MEET_DIST_KM zugeordnet.  Der Zellschlüssel ist
+#   (round(lat / cell_deg_lat), round(lon / cell_deg_lon))
+# wobei cell_deg_lat = meet_km / 111.32 und
+#       cell_deg_lon = meet_km / (111.32 * cos(ref_lat)).
+# Danach wird Union-Find NUR über die belegten ZELLEN durchgeführt:
+# jede belegte Zelle wird mit ihren 8 Nachbarzellen geuniert, sofern belegt.
+# Komplexität: O(n) für Zuweisung + O(k·α) für Union-Find (k = belegte Zellen).
+# Border-Fälle (zwei Survivors nahe Zellengrenze, aber in verschiedenen Zellen)
+# werden durch die 8-Nachbar-Union korrekt erfasst, sofern sie innerhalb einer
+# Zellenbreite liegen — was bei meet_km-großen Zellen der Fall ist.
 
 def _merge_groups(
     ids: np.ndarray,
@@ -189,115 +176,152 @@ def _merge_groups(
     lons: np.ndarray,
     group_ids: np.ndarray,
     meet_km: float,
-    bucket_deg: float,
+    bucket_deg: float,  # ungenutzt (Kompatibilität), Zellgröße wird aus meet_km berechnet
     conn: sqlite3.Connection,
     current_tick: int,
 ) -> np.ndarray:
-    """Gruppiert nahegelegene Survivors via Spatial-Grid (kein O(n²)).
+    """O(n)-Gruppierung via Union-Find über Gitterzellen.
 
-    Survivors innerhalb `meet_km` erhalten dieselbe `group_id`.
-    Neue Gruppen werden in `survivor_groups` angelegt; Zentroide aktualisiert.
+    Jede belegte Gitterzelle (Kantenlänge ≈ meet_km) wird mit ihren 8
+    Nachbarzellen geuniert.  Alle Survivors einer zusammenhängenden Komponente
+    erhalten dieselbe group_id (kleinste Survivor-id der Komponente als Anker).
+    Neue Gruppen werden in `survivor_groups` angelegt; bestehende bleiben.
     Gibt aktualisiertes `group_ids`-Array zurück.
     """
     n = len(ids)
-
-    # Union-Find mit plain Python-Listen (kein numpy-Overhead pro Zugriff)
-    parent: list[int] = list(range(n))
-
-    def find(x: int) -> int:
-        root = x
-        while parent[root] != root:
-            root = parent[root]
-        # Pfadkompression
-        while parent[x] != root:
-            parent[x], x = root, parent[x]
-        return root
-
-    def union(a: int, b: int) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
-
-    # Bucket-Hash für Spatial-Grid
-    buckets: dict[tuple[int, int], list[int]] = {}
     lats_list = lats.tolist()
     lons_list = lons.tolist()
-    inv_bucket = 1.0 / bucket_deg
-    for i in range(n):
-        key = (int(lats_list[i] * inv_bucket), int(lons_list[i] * inv_bucket))
-        buckets.setdefault(key, []).append(i)
-
-    # Bbox-Schwelle in Grad
-    lat_thresh = meet_km / 111.0
-    lon_thresh = meet_km / 55.5  # konservativ (bei ~50° Breite ~78 km/°)
-
-    # Haversine-Konstanten
-    R = 6371.0
-    meet_km_sq = meet_km * meet_km  # für schnellen Vergleich (Approximation)
-    deg2rad = math.pi / 180.0
-
-    neighbor_offsets = [(0, 0), (0, 1), (1, 0), (1, -1), (1, 1)]
-    for (bx, by), indices in buckets.items():
-        for dbx, dby in neighbor_offsets:
-            other_key = (bx + dbx, by + dby)
-            other_indices = buckets.get(other_key)
-            if other_indices is None:
-                continue
-            for i in indices:
-                lat_i = lats_list[i]
-                lon_i = lons_list[i]
-                for j in other_indices:
-                    if i >= j:
-                        continue
-                    dlat = abs(lat_i - lats_list[j])
-                    if dlat > lat_thresh:
-                        continue
-                    dlon = abs(lon_i - lons_list[j])
-                    if dlon > lon_thresh:
-                        continue
-                    # Haversine (inline für Speed)
-                    phi1 = lat_i * deg2rad
-                    dphi = (lats_list[j] - lat_i) * deg2rad
-                    dlam = (lons_list[j] - lon_i) * deg2rad
-                    a = (math.sin(dphi * 0.5) ** 2
-                         + math.cos(phi1) * math.cos(lats_list[j] * deg2rad)
-                         * math.sin(dlam * 0.5) ** 2)
-                    if R * 2 * math.asin(math.sqrt(a)) <= meet_km:
-                        union(i, j)
-
-    # Roots als plain Python-Liste bestimmen
-    roots = [find(i) for i in range(n)]
-
-    # group_ids als Python-Liste für schnellen Zugriff
+    ids_list = ids.tolist()
     gids_list = group_ids.tolist()
 
-    # Für jeden Root: DB-group_id ermitteln oder neue anlegen
-    root_members: dict[int, list[int]] = {}
-    for i, r in enumerate(roots):
-        root_members.setdefault(r, []).append(i)
+    # Gitterzellgröße in Grad
+    # Lat-Richtung: 1° ≈ 111.32 km (konstant)
+    cell_deg_lat = meet_km / 111.32
+    # Lon-Richtung: 1° ≈ 111.32 * cos(lat) km; wir nehmen einen globalen
+    # Referenz-Breitengrad (Mittel der Population) für eine gute Näherung.
+    # Einzelne Survivors nahe den Polen könnten leicht falsch zugeordnet werden,
+    # aber das ist für realistische Populationen (< ±80°) vernachlässigbar.
+    ref_lat = float(lats.mean()) if n > 0 else 0.0
+    cos_ref = max(math.cos(math.radians(ref_lat)), 0.01)  # min. cos für hohe Breiten
+    cell_deg_lon = meet_km / (111.32 * cos_ref)
 
+    # Schritt 1: Survivor → Gitterzelle zuordnen
+    # Zellschlüssel = (gerundeter lat-Index, gerundeter lon-Index)
+    survivor_cell: list[tuple[int, int]] = []
+    for i in range(n):
+        ci = int(round(lats_list[i] / cell_deg_lat))
+        cj = int(round(lons_list[i] / cell_deg_lon))
+        survivor_cell.append((ci, cj))
+
+    # Schritt 2: Belegte Zellen ermitteln und durchnummerieren
+    occupied_cells: dict[tuple[int, int], int] = {}  # Zelle → Zellen-Index
+    for cell in survivor_cell:
+        if cell not in occupied_cells:
+            occupied_cells[cell] = len(occupied_cells)
+
+    n_cells = len(occupied_cells)
+
+    # Schritt 3: Union-Find über Zellen (nicht über Survivors)
+    cell_parent: list[int] = list(range(n_cells))
+    cell_rank: list[int] = [0] * n_cells
+
+    def _find(x: int) -> int:
+        root = x
+        while cell_parent[root] != root:
+            root = cell_parent[root]
+        # Pfadkompression
+        while cell_parent[x] != root:
+            cell_parent[x], x = root, cell_parent[x]
+        return root
+
+    def _union(a: int, b: int) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra == rb:
+            return
+        # Union by rank
+        if cell_rank[ra] < cell_rank[rb]:
+            ra, rb = rb, ra
+        cell_parent[rb] = ra
+        if cell_rank[ra] == cell_rank[rb]:
+            cell_rank[ra] += 1
+
+    # Jede belegte Zelle mit ihren 8 Nachbarzellen unieren
+    neighbor_offsets = [
+        (-1, -1), (-1, 0), (-1, 1),
+        ( 0, -1),           ( 0, 1),
+        ( 1, -1), ( 1, 0), ( 1, 1),
+    ]
+    for (ci, cj), idx in occupied_cells.items():
+        for dci, dcj in neighbor_offsets:
+            neighbor = (ci + dci, cj + dcj)
+            if neighbor in occupied_cells:
+                _union(idx, occupied_cells[neighbor])
+
+    # Schritt 4: Survivor → Zellen-Wurzel → Komponente
+    # Pro Komponente (Zellen-Root): kleinste Survivor-id als Anker für
+    # deterministischen Gruppen-Anker.
+    root_to_min_id: dict[int, int] = {}   # Zellen-Root → kleinste Survivor-id (index)
+    root_members_idx: dict[int, list[int]] = {}  # Zellen-Root → [Survivor-Indizes]
+
+    cell_roots = {cell: _find(idx) for cell, idx in occupied_cells.items()}
+
+    for i in range(n):
+        cell = survivor_cell[i]
+        root = cell_roots[cell]
+        root_members_idx.setdefault(root, []).append(i)
+        sid = ids_list[i]
+        if root not in root_to_min_id or sid < root_to_min_id[root]:
+            root_to_min_id[root] = i  # speichern als Array-Index des Survivors
+
+    # Schritt 5: DB-group_id je Komponente bestimmen
+    # - Wenn mind. 2 Survivors in Komponente:
+    #     - Vorhandene group_ids recyceln (kleinste); sonst neue Gruppe anlegen.
+    # - Einzelne Survivor: group_id = 0 (kein Gruppen-Eintrag).
+    #
+    # Optimierung: Alle neuen Gruppen in einem einzigen executemany-Aufruf
+    # anlegen statt n×(INSERT + SELECT last_insert_rowid()). Dazu:
+    # 1. Aktuellen MAX(id) aus survivor_groups holen.
+    # 2. Neue Gruppen nummerieren (max_id + 1, max_id + 2, ...).
+    # 3. Alle auf einmal via executemany einfügen (mit expliziten IDs).
+    max_gid_row = conn.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM survivor_groups;"
+    ).fetchone()[0]
+    next_gid = int(max_gid_row) + 1
+
+    # Zwei-Pass: erst recyceln/sammeln, dann Batch-Insert.
     root_to_db_group: dict[int, int] = {}
-    for r, members in root_members.items():
-        # Vorhandene group_ids unter Mitgliedern (>0)
+    new_group_rows: list[tuple] = []  # (id, created_tick, clat, clon)
+
+    for root, members in root_members_idx.items():
+        if len(members) < 2:
+            root_to_db_group[root] = 0
+            continue
         existing = [gids_list[i] for i in members if gids_list[i] > 0]
         if existing:
-            root_to_db_group[r] = min(existing)
-        elif len(members) > 1:
-            # Neue Gruppe anlegen
-            clat = sum(lats_list[i] for i in members) / len(members)
-            clon = sum(lons_list[i] for i in members) / len(members)
-            conn.execute(
-                "INSERT INTO survivor_groups (created_tick, lat, lon) VALUES (?, ?, ?);",
-                (current_tick, clat, clon),
-            )
-            root_to_db_group[r] = conn.execute("SELECT last_insert_rowid();").fetchone()[0]
+            root_to_db_group[root] = min(existing)
         else:
-            root_to_db_group[r] = 0
+            # Neue Gruppe: Zentroid aus Mitgliedern
+            nm = len(members)
+            clat = sum(lats_list[i] for i in members) / nm
+            clon = sum(lons_list[i] for i in members) / nm
+            root_to_db_group[root] = next_gid
+            new_group_rows.append((next_gid, current_tick, clat, clon))
+            next_gid += 1
 
-    new_gids = np.array([root_to_db_group[r] for r in roots], dtype=np.int64)
-    # Hinweis: Zentroide werden in step_day nach der Bewegung aktualisiert,
-    # damit sie die finalen Positionen widerspiegeln.
-    return new_gids
+    if new_group_rows:
+        conn.executemany(
+            "INSERT INTO survivor_groups (id, created_tick, lat, lon) VALUES (?, ?, ?, ?);",
+            new_group_rows,
+        )
+
+    # Schritt 6: Neue group_ids als Array zurückgeben
+    new_gids_list = [0] * n
+    for i in range(n):
+        cell = survivor_cell[i]
+        root = cell_roots[cell]
+        new_gids_list[i] = root_to_db_group[root]
+
+    return np.array(new_gids_list, dtype=np.int64)
 
 
 # ---------------------------------------------------------------------------
@@ -353,18 +377,27 @@ def step_day(conn: sqlite3.Connection, day: int) -> None:
 
     # Für Gruppen: Bewegungsrichtung aus dem ZENTROID der Gruppe berechnen.
     # Einzelne Survivors (group_id=0) bewegen sich aus ihrer eigenen Position.
-    # Wir bauen Repräsentanten-Arrays: für Gruppen-Mitglieder nutzen wir den
-    # Gruppen-Zentroid als Ausgangspunkt für Gradient/Rausch.
+    # Vektorisiert via bincount (O(n), kein Python-Loop über Gruppen).
+    in_group_mask = new_group_ids > 0
     rep_lats = lats.copy()
     rep_lons = lons.copy()
 
-    unique_groups = np.unique(new_group_ids[new_group_ids > 0])
-    for gid in unique_groups:
-        mask = new_group_ids == gid
-        clat = float(lats[mask].mean())
-        clon = float(lons[mask].mean())
-        rep_lats[mask] = clat
-        rep_lons[mask] = clon
+    if np.any(in_group_mask):
+        # Remapping: group_ids → dichte 0-basierte Indizes
+        gids_in = new_group_ids[in_group_mask]
+        unique_groups, inv_g = np.unique(gids_in, return_inverse=True)
+        n_groups = len(unique_groups)
+        counts_g = np.bincount(inv_g, minlength=n_groups).astype(np.float64)
+        # Gruppen-Zentroide via bincount (sicher: counts_g > 0 da jeder Eintrag belegt)
+        sum_lat = np.bincount(inv_g, weights=lats[in_group_mask], minlength=n_groups)
+        sum_lon = np.bincount(inv_g, weights=lons[in_group_mask], minlength=n_groups)
+        mean_lat_g = sum_lat / counts_g
+        mean_lon_g = sum_lon / counts_g
+        # rep-Arrays mit Gruppen-Zentroid befüllen
+        rep_lats[in_group_mask] = mean_lat_g[inv_g]
+        rep_lons[in_group_mask] = mean_lon_g[inv_g]
+    else:
+        unique_groups = np.empty(0, dtype=np.int64)
 
     dlat_grad, dlon_grad = _gradient_at(field, rep_lats, rep_lons)
     d_local = _density_at(field, rep_lats, rep_lons).astype(np.float64)
@@ -390,37 +423,31 @@ def step_day(conn: sqlite3.Connection, day: int) -> None:
     soc_dlon[nonzero] /= soc_mag[nonzero]
 
     # --- Deterministischer Rausch ----------------------------------------
-    # Seed je Survivor: (world_seed XOR survivor_id * 2654435761) XOR day.
-    # Gruppe: Rausch aus dem Survivor mit der kleinsten ID in der Gruppe
-    # (deterministisch, verhindert Gruppen-Auseinanderdriften).
-    # Deterministischer Rausch: je Gruppe den kleinsten survivor-id als Salt,
-    # damit Gruppenmitglieder dieselbe Richtung haben.
-    # Bug-1-Fix (Bewegung): np.random.default_rng mit SeedSequence statt LCG —
-    # liefert echte Gleichverteilung, bleibt voll deterministisch.
+    # Rausch-Salt: je Gruppe die kleinste Survivor-id (deterministisch).
+    # Vektorisiert via np.minimum.at (O(n), kein Python-Loop über Gruppen).
     rng_seed_ids = ids.copy()
-    for gid in unique_groups:
-        mask = new_group_ids == gid
-        min_id = int(ids[mask].min())
-        rng_seed_ids[mask] = min_id
+    if np.any(in_group_mask):
+        # group_min_id[g] = min(ids) für Gruppe g (0-basierter Index)
+        group_min_id = np.full(n_groups, np.iinfo(np.int64).max, dtype=np.int64)
+        np.minimum.at(group_min_id, inv_g, ids[in_group_mask])
+        rng_seed_ids[in_group_mask] = group_min_id[inv_g]
 
-    # Eindeutige Einzel-Seeds je Survivor/Gruppe: (world_seed, day, salt=4, seed_id)
-    # salt=4 trennt Bewegungs-RNG vom Sterbe-RNG (salt=0).
-    noise_lat = np.empty(n, dtype=np.float64)
-    noise_lon = np.empty(n, dtype=np.float64)
-    seen_seed_ids: dict[int, tuple[float, float]] = {}
-    for i in range(n):
-        sid = int(rng_seed_ids[i])
-        if sid in seen_seed_ids:
-            noise_lat[i], noise_lon[i] = seen_seed_ids[sid]
-        else:
-            rng_mv = np.random.default_rng(
-                np.random.SeedSequence([int(world_seed), int(day), 4, sid])
-            )
-            nl = float(rng_mv.uniform(-1.0, 1.0))
-            no = float(rng_mv.uniform(-1.0, 1.0))
-            seen_seed_ids[sid] = (nl, no)
-            noise_lat[i] = nl
-            noise_lon[i] = no
+    # Deterministischer Rausch: O(1) RNG-Aufrufe statt O(n).
+    # Strategie: Einen einzelnen RNG mit (world_seed, day, salt=4) seeden und
+    # 2*n Werte generieren. Die Abbildung salt_id → Rausch-Wert ist über den
+    # sortierten Rang der unique salts definiert — reihenfolgeunabhängig und
+    # stabil bei gleicher (world_seed, day)-Kombination.
+    # Determinismus: gleiche (world_seed, day) + gleiche IDs → identischer Rausch.
+    # Salt=4 trennt Bewegungs-RNG vom Sterbe-RNG (Salt=0).
+    unique_salts, inv_salt = np.unique(rng_seed_ids, return_inverse=True)
+    n_salts = len(unique_salts)
+    rng_noise = np.random.default_rng(
+        np.random.SeedSequence([int(world_seed), int(day), 4])
+    )
+    # n_salts Paare: [noise_lat_0, noise_lon_0, noise_lat_1, noise_lon_1, ...]
+    raw_noise = rng_noise.uniform(-1.0, 1.0, size=n_salts * 2)
+    noise_lat = raw_noise[inv_salt * 2]
+    noise_lon = raw_noise[inv_salt * 2 + 1]
 
     # --- Bewegungsrichtung zusammensetzen --------------------------------
     dir_lat = (
@@ -455,11 +482,19 @@ def step_day(conn: sqlite3.Connection, day: int) -> None:
     new_lons = ((new_lons + 180.0) % 360.0) - 180.0
 
     # Gruppen-Zentroide in survivor_groups aktualisieren (nach Bewegung)
-    for gid in unique_groups:
-        mask = new_group_ids == gid
-        conn.execute(
+    # Vektorisiert: executemany statt per-Gruppe execute
+    if len(unique_groups) > 0:
+        sum_nlat = np.bincount(inv_g, weights=new_lats[in_group_mask], minlength=n_groups)
+        sum_nlon = np.bincount(inv_g, weights=new_lons[in_group_mask], minlength=n_groups)
+        mean_nlat_g = sum_nlat / counts_g
+        mean_nlon_g = sum_nlon / counts_g
+        group_update_rows = [
+            (float(mean_nlat_g[k]), float(mean_nlon_g[k]), int(unique_groups[k]))
+            for k in range(n_groups)
+        ]
+        conn.executemany(
             "UPDATE survivor_groups SET lat = ?, lon = ? WHERE id = ?;",
-            (float(new_lats[mask].mean()), float(new_lons[mask].mean()), int(gid)),
+            group_update_rows,
         )
 
     # --- Bulk-Update: Positionen + group_id schreiben --------------------
@@ -479,8 +514,12 @@ def step_day(conn: sqlite3.Connection, day: int) -> None:
 
     # --- Schritt 3: Sterbe-Modell (vektorisiert) --------------------------
     # birth_tick ist bereits in `rows` geladen (SELECT enthält birth_tick).
+    # Defensiv: NULL birth_tick wird als Erwachsener (30 Jahre = -15_768_000 min)
+    # behandelt, NICHT als Säugling (Alter 0). Nach spawn_survivors(force=True)
+    # sollte birth_tick nie NULL sein – dies ist nur ein Sicherheitsnetz.
+    _FALLBACK_BIRTH_TICK = -(30 * 525_600)  # 30 Jahre vor Kollaps
     birth_ticks_arr = np.array(
-        [r["birth_tick"] if r["birth_tick"] is not None else 0 for r in rows],
+        [r["birth_tick"] if r["birth_tick"] is not None else _FALLBACK_BIRTH_TICK for r in rows],
         dtype=np.int64,
     )
 
@@ -559,32 +598,48 @@ def step_day(conn: sqlite3.Connection, day: int) -> None:
     dead_ids = ids[dies_mask]
 
     if len(dead_ids) > 0:
-        # Tote: alive=0 setzen, group_id NULLen (Bulk)
+        # Tote: alive=0 setzen, group_id NULLen (Bulk via executemany)
         dead_list = [(int(did),) for did in dead_ids]
         conn.executemany(
             "UPDATE survivors SET alive = 0, group_id = NULL WHERE id = ?;",
             dead_list,
         )
 
-        # Leere / Einzel-Gruppen auflösen: betroffene group_ids sammeln
-        affected_gids: set[int] = set(
-            int(new_group_ids[i]) for i in np.where(dies_mask & in_group)[0]
-        )
-        for gid in affected_gids:
-            still_alive = conn.execute(
-                "SELECT COUNT(*) FROM survivors WHERE group_id = ? AND alive = 1;",
-                (gid,),
-            ).fetchone()[0]
-            if still_alive == 0:
-                conn.execute("DELETE FROM survivor_groups WHERE id = ?;", (gid,))
-            elif still_alive == 1:
-                # Einzelperson → Gruppe auflösen
-                conn.execute(
-                    "UPDATE survivors SET group_id = NULL "
-                    "WHERE group_id = ? AND alive = 1;",
-                    (gid,),
+        # Leere / Einzel-Gruppen auflösen: In-Memory-Berechnung (kein DB-Query).
+        # Wir wissen für jede beteiligte Gruppe, wie viele Survivor nach dem Tod
+        # noch leben — direkt aus den numpy-Arrays.
+        affected_mask = dies_mask & in_group_mask
+        if np.any(affected_mask):
+            affected_gids = np.unique(new_group_ids[affected_mask])
+            # survivors_alive_after[i] = 1 wenn überlebt hat
+            alive_after = ~dies_mask  # bool-Maske: überlebt?
+
+            # Für jede betroffene Gruppe: Anzahl lebender Mitglieder zählen (in-memory)
+            # Vektorisiert: Für jede gid die Maske aufbauen + sum
+            # Da affected_gids typischerweise klein (Hunderte bis wenige Tausende),
+            # ist dies ausreichend schnell ohne per-gid DB-Query.
+            groups_to_delete: list[int] = []
+            survivors_to_ungroup: list[tuple] = []  # (gid,) für UPDATE
+
+            for gid in affected_gids.tolist():
+                group_mask = new_group_ids == gid
+                n_alive = int((group_mask & alive_after).sum())
+                if n_alive == 0:
+                    groups_to_delete.append(gid)
+                elif n_alive == 1:
+                    survivors_to_ungroup.append((int(gid),))
+                    groups_to_delete.append(gid)
+
+            if survivors_to_ungroup:
+                conn.executemany(
+                    "UPDATE survivors SET group_id = NULL WHERE group_id = ? AND alive = 1;",
+                    survivors_to_ungroup,
                 )
-                conn.execute("DELETE FROM survivor_groups WHERE id = ?;", (gid,))
+            if groups_to_delete:
+                conn.executemany(
+                    "DELETE FROM survivor_groups WHERE id = ?;",
+                    [(int(gid),) for gid in groups_to_delete],
+                )
 
     # survivor_sim_day aktualisieren
     conn.execute("UPDATE world SET survivor_sim_day = ? WHERE id = 1;", (day,))

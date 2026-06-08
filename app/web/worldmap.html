@@ -28,16 +28,23 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: sans-serif; background: #111; color: #eee; display: flex; flex-direction: column; height: 100vh; }
     #toolbar {
-      display: flex; align-items: center; gap: 12px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
       padding: 8px 14px; background: #1a1a1a; border-bottom: 1px solid #333; flex-shrink: 0;
     }
     #toolbar h1 { font-size: 1rem; white-space: nowrap; }
     #status { font-size: 0.85rem; color: #aaa; }
-    #btn-spawn {
-      padding: 4px 12px; background: #e55; border: none; color: #fff;
-      border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+    .sim-btn {
+      padding: 4px 10px; background: #2a6; border: none; color: #fff;
+      border-radius: 4px; cursor: pointer; font-size: 0.82rem;
     }
-    #btn-spawn:hover { background: #c33; }
+    .sim-btn:hover:not(:disabled) { background: #1a5; }
+    .sim-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    #btn-reset {
+      padding: 4px 10px; background: #e55; border: none; color: #fff;
+      border-radius: 4px; cursor: pointer; font-size: 0.82rem;
+    }
+    #btn-reset:hover:not(:disabled) { background: #c33; }
+    #btn-reset:disabled { opacity: 0.45; cursor: not-allowed; }
     #back-link { font-size: 0.8rem; color: #888; text-decoration: none; margin-left: auto; }
     #back-link:hover { color: #ccc; }
     #map { flex: 1; }
@@ -61,6 +68,10 @@
 <div id="toolbar">
   <h1>🌍 Welt-Übersicht (Debug)</h1>
   <span id="status">Lade…</span>
+  <button class="sim-btn" id="btn-day1" title="1 Tag simulieren">+1 Tag</button>
+  <button class="sim-btn" id="btn-day10" title="10 Tage simulieren">+10 Tage</button>
+  <button class="sim-btn" id="btn-day30" title="30 Tage simulieren">+30 Tage</button>
+  <button id="btn-reset" title="Survivors neu spawnen (Tag 0)">Reset (neu spawnen)</button>
   <a href="/" id="back-link">← Spiel</a>
 </div>
 
@@ -99,13 +110,20 @@
   // --- Layer holders ---
   let heatLayer = null;
   let clusterLayer = null;
-  let currentPoints = [];   // [[lat, lon], ...]
-  let currentData = [];     // full rows if we have id/materialized (future)
+  let currentPoints = [];   // [[lat, lon], ...] – alle Punkte im Speicher
 
   const ZOOM_THRESHOLD = 5;
 
+  const statusEl = document.getElementById('status');
+  const simBtns = document.querySelectorAll('.sim-btn, #btn-reset');
+
   function setStatus(text) {
-    document.getElementById('status').textContent = text;
+    statusEl.textContent = text;
+  }
+
+  function setBusy(busy, label) {
+    simBtns.forEach(b => b.disabled = busy);
+    if (busy && label) setStatus(label);
   }
 
   // Build heatmap layer from points array [[lat,lon],...]
@@ -119,96 +137,168 @@
     });
   }
 
-  // Build marker cluster layer from points array [[lat,lon],...]
-  function buildClusterLayer(points) {
+  // Build marker cluster layer ONLY for points within the current viewport
+  function buildClusterForViewport() {
+    if (!currentPoints.length) return null;
+    const bounds = map.getBounds();
+    const visible = currentPoints.filter(p => bounds.contains([p[0], p[1]]));
+    if (!visible.length) return null;
+
     const cluster = L.markerClusterGroup({ chunkedLoading: true, chunkInterval: 100 });
-    const markers = points.map((p, i) =>
+    const markers = visible.map(p =>
       L.marker([p[0], p[1]]).bindPopup(
-        `<b>Überlebende:r #${i + 1}</b><br>lat: ${p[0].toFixed(5)}<br>lon: ${p[1].toFixed(5)}`
+        `<b>Überlebende:r</b><br>lat: ${p[0].toFixed(5)}<br>lon: ${p[1].toFixed(5)}`
       )
     );
     cluster.addLayers(markers);
     return cluster;
   }
 
-  // Switch layers based on current zoom
+  // Rebuild cluster layer (lazy + viewport-bounded); remove old one first
+  function rebuildCluster() {
+    if (clusterLayer) {
+      if (map.hasLayer(clusterLayer)) map.removeLayer(clusterLayer);
+      clusterLayer = null;
+    }
+    clusterLayer = buildClusterForViewport();
+    if (clusterLayer) clusterLayer.addTo(map);
+  }
+
+  // Switch layers based on current zoom; rebuild cluster when zooming in
   function updateLayers() {
     if (!currentPoints.length) return;
     const zoom = map.getZoom();
 
     if (zoom < ZOOM_THRESHOLD) {
-      // Show heatmap, hide cluster
+      // Below threshold: only heatmap
       if (clusterLayer && map.hasLayer(clusterLayer)) map.removeLayer(clusterLayer);
+      if (clusterLayer) { clusterLayer = null; }
       if (heatLayer && !map.hasLayer(heatLayer)) heatLayer.addTo(map);
     } else {
-      // Show cluster, hide heatmap
+      // Above threshold: cluster (viewport-only) + no heatmap
       if (heatLayer && map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
-      if (clusterLayer && !map.hasLayer(clusterLayer)) clusterLayer.addTo(map);
+      rebuildCluster();
+    }
+  }
+
+  // On move/zoom: if already at cluster zoom, rebuild cluster for new viewport
+  function onMapMove() {
+    if (!currentPoints.length) return;
+    const zoom = map.getZoom();
+    if (zoom >= ZOOM_THRESHOLD) {
+      rebuildCluster();
     }
   }
 
   map.on('zoomend', updateLayers);
+  map.on('moveend', onMapMove);
 
-  // Render data (called after load or spawn)
+  // Render data: tear down old layers, build fresh heatmap; cluster only if already zoomed in
   function renderPoints(points) {
-    // Remove old layers
     if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
     if (clusterLayer) { map.removeLayer(clusterLayer); clusterLayer = null; }
 
     currentPoints = points;
-
     if (!points.length) return;
 
+    // Always rebuild heatmap (fast for 100k points)
     heatLayer = buildHeatLayer(points);
-    clusterLayer = buildClusterLayer(points);
 
-    updateLayers();
-    setStatus(`${points.length.toLocaleString('de-DE')} Überlebende`);
-  }
-
-  // Load survivors from API
-  async function loadSurvivors() {
-    setStatus('Lade…');
-    try {
-      const resp = await fetch('/survivors');
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-
-      document.getElementById('empty-notice').classList.toggle('hidden', data.count > 0);
-
-      if (data.count === 0) {
-        setStatus('Keine Überlebenden in der DB');
-        renderPoints([]);
-        return;
-      }
-
-      renderPoints(data.points);
-    } catch (err) {
-      setStatus('Fehler: ' + err.message);
-      console.error(err);
+    // Cluster: lazy – only if currently zoomed in, otherwise built on next zoom/move
+    const zoom = map.getZoom();
+    if (zoom >= ZOOM_THRESHOLD) {
+      rebuildCluster();
+    } else {
+      heatLayer.addTo(map);
     }
   }
 
-  // Spawn survivors via debug endpoint
+  // Update status bar from stats object
+  function applyStats(stats) {
+    setStatus(
+      `Tag ${stats.day} · ${stats.alive.toLocaleString('de-DE')} lebende · ${stats.groups.toLocaleString('de-DE')} Gruppen`
+    );
+  }
+
+  // Load stats and update status bar
+  async function loadStats() {
+    const resp = await fetch('/survivors/stats');
+    if (!resp.ok) throw new Error(`/survivors/stats HTTP ${resp.status}`);
+    return resp.json();
+  }
+
+  // Load survivors (alive only) and redraw layers
+  async function loadAndRender() {
+    const resp = await fetch('/survivors');
+    if (!resp.ok) throw new Error(`/survivors HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    document.getElementById('empty-notice').classList.toggle('hidden', data.count > 0);
+    if (data.count === 0) {
+      renderPoints([]);
+    } else {
+      renderPoints(data.points);
+    }
+    return data;
+  }
+
+  // Full refresh: survivors + stats
+  async function refresh() {
+    const [data, stats] = await Promise.all([loadAndRender(), loadStats()]);
+    if (data.count === 0) {
+      setStatus('Keine Überlebenden in der DB');
+    } else {
+      applyStats(stats);
+    }
+  }
+
+  // Simulate N days
+  async function simulateDays(n) {
+    setBusy(true, `Simuliere ${n} Tag${n === 1 ? '' : 'e'}…`);
+    try {
+      const resp = await fetch('/debug/simulate-days', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: n }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const stats = await resp.json();
+      await loadAndRender();
+      applyStats(stats);
+    } catch (err) {
+      setStatus('Fehler: ' + err.message);
+      console.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Spawn survivors via debug endpoint (Reset)
   async function spawnSurvivors() {
-    setStatus('Spawne 100.000 Überlebende…');
+    setBusy(true, 'Spawne 100.000 Überlebende…');
     document.getElementById('empty-notice').classList.add('hidden');
     try {
       const resp = await fetch('/debug/spawn-survivors', { method: 'POST' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      // Reload data
-      await loadSurvivors();
+      await refresh();
     } catch (err) {
       setStatus('Fehler beim Spawnen: ' + err.message);
       console.error(err);
+    } finally {
+      setBusy(false);
     }
   }
 
-  // Wire up spawn buttons
+  // Wire up buttons
+  document.getElementById('btn-day1').addEventListener('click', () => simulateDays(1));
+  document.getElementById('btn-day10').addEventListener('click', () => simulateDays(10));
+  document.getElementById('btn-day30').addEventListener('click', () => simulateDays(30));
+  document.getElementById('btn-reset').addEventListener('click', spawnSurvivors);
   document.getElementById('btn-spawn-notice').addEventListener('click', spawnSurvivors);
 
   // Initial load
-  loadSurvivors();
+  setStatus('Lade…');
+  refresh().catch(err => { setStatus('Fehler: ' + err.message); console.error(err); });
 })();
 </script>
 </body>

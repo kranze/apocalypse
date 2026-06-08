@@ -42,14 +42,19 @@ def spawn_survivors(
     conn: sqlite3.Connection,
     total: int = 100_000,
     seed: int | None = None,
+    force: bool = False,
 ) -> int:
     """Verteilt ``total`` Überlebende deterministisch über die Welt.
 
     Multinomiale Verteilung proportional zur Bevölkerungsdichte des Gitters.
     Innerhalb jeder Zelle wird die Position deterministisch gejittert.
 
-    Idempotent: existieren bereits genau ``total`` Zeilen → nichts tun.
-    Sonst: Tabelle leeren und neu erzeugen (sauberer Seed-Wechsel).
+    Regeneriert (Tabelle leeren + neu erzeugen) wenn:
+    - ``force`` True, ODER
+    - vorhandene Anzahl != total, ODER
+    - mindestens eine vorhandene Zeile ``birth_tick IS NULL`` hat
+      (Selbstheilung für stale DBs aus Zeiten vor der Spalte).
+    Sonst: No-op (Idempotenz).
 
     Parameters
     ----------
@@ -59,16 +64,22 @@ def spawn_survivors(
         Anzahl zu verteilender Überlebender.
     seed:
         Expliziter Seed; falls None wird ``db.get_world_seed(conn)`` genutzt.
+    force:
+        True erzwingt Tabelle leeren + neu erzeugen unabhängig von der Anzahl.
 
     Returns
     -------
     int
         Anzahl eingefügter Zeilen (== total).
     """
-    # Idempotenz-Check
+    # Idempotenz-Check mit Selbstheilung für stale DBs (birth_tick IS NULL)
     existing = conn.execute("SELECT COUNT(*) FROM survivors;").fetchone()[0]
-    if existing == total:
-        return total
+    if not force and existing == total:
+        null_count = conn.execute(
+            "SELECT COUNT(*) FROM survivors WHERE birth_tick IS NULL;"
+        ).fetchone()[0]
+        if null_count == 0:
+            return total
 
     # Gitter laden (prozessweit gecacht)
     grid = load_grid()  # list[tuple[lat, lon, weight]]
