@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from . import audit, biology, capabilities, constants, movement, provision, resources
+from . import audit, biology, capabilities, constants, movement, provision, resources, survivor_sim
 from .events import HALTING
 
 
@@ -34,6 +34,19 @@ def advance_tick(
         conn.execute("UPDATE world SET tick = ? WHERE id = 1;", (t1,))
         distances = movement.advance_movement(conn, minutes, t1)
         interrupts += distances.pop("_interrupts", [])
+
+        # Survivor-Globalschritt: einmal pro überschrittenem Spieltag (Phase 1, nach Zeit).
+        # „Zuletzt verarbeiteter Tag" in world.survivor_sim_day persistiert.
+        world_extra = conn.execute(
+            "SELECT survivor_sim_day FROM world WHERE id = 1;"
+        ).fetchone()
+        last_sim_day: int = world_extra["survivor_sim_day"] if world_extra["survivor_sim_day"] is not None else 0
+        new_day: int = t1 // constants.MINUTES_PER_DAY
+        # Sequenziell je Tag — state-abhängig, daher kein Bulk-Sprung
+        for d in range(last_sim_day + 1, new_day + 1):
+            survivor_sim.step_day(conn, d)
+        # (survivor_sim_day wird innerhalb step_day auf d gesetzt; kein doppelter Write)
+
         # Capabilities: Upkeep + Folgen (z.B. SSID-Beacon-Kontakte)
         interrupts += capabilities.advance(conn, minutes, t1, seed)
 

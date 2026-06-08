@@ -22,7 +22,9 @@ CREATE TABLE world (
     -- Wetter als einfacher Snapshot; ist Anzeige, keine Simulation (DESIGN.md)
     weather_temp_c  REAL    NOT NULL DEFAULT 15.0,
     weather_state   TEXT    NOT NULL DEFAULT 'clear', -- clear|clouds|rain|storm|snow
-    weather_wind_kmh REAL   NOT NULL DEFAULT 0.0
+    weather_wind_kmh REAL   NOT NULL DEFAULT 0.0,
+    -- Survivor-Migrations-Sim: zuletzt vollständig verarbeiteter Spieltag (Issue #19)
+    survivor_sim_day INTEGER NOT NULL DEFAULT 0
 );
 
 -- ---------------------------------------------------------------------------
@@ -246,15 +248,33 @@ CREATE TABLE location_searches (
 -- ---------------------------------------------------------------------------
 -- ÜBERLEBENDE (globale Verteilung; lazy Materialisierung zu NPC-Entitäten)
 -- 100.000 Punkte, seed-deterministisch aus pop_grid. Nur Sim-Kern schreibt.
+-- Konvention birth_tick: Tick 0 = Kollaps-Zeitpunkt.
+--   birth_tick = -(age_years * 525600)  (negativ, da vor dem Kollaps geboren)
+--   Aktuelles Alter in Jahren = (current_tick - birth_tick) / 525600
 -- ---------------------------------------------------------------------------
 CREATE TABLE survivors (
     id              INTEGER PRIMARY KEY,
     lat             REAL    NOT NULL,
     lon             REAL    NOT NULL,
     materialized    INTEGER NOT NULL DEFAULT 0, -- 0 = leichter Punkt, 1 = NPC
-    character_id    INTEGER REFERENCES characters(id)
+    character_id    INTEGER REFERENCES characters(id),
+    sex             TEXT,                        -- 'm' oder 'f'
+    birth_tick      INTEGER,                     -- Tick des Geburtstags (negativ = vor Kollaps)
+    alive           INTEGER NOT NULL DEFAULT 1,  -- 1 = lebt, 0 = tot
+    group_id        INTEGER                      -- NULL = keine Gruppe; FK zu survivor_groups
 );
 CREATE INDEX idx_survivors_geo ON survivors(lat, lon);
+
+-- ---------------------------------------------------------------------------
+-- ÜBERLEBENDEN-GRUPPEN (Fundament für #19/#20: Migration und Sterben)
+-- Zentroid der Gruppe; Mitglieder verweisen per survivors.group_id.
+-- ---------------------------------------------------------------------------
+CREATE TABLE survivor_groups (
+    id              INTEGER PRIMARY KEY,
+    created_tick    INTEGER,
+    lat             REAL,
+    lon             REAL
+);
 
 -- ---------------------------------------------------------------------------
 -- CHAT LOG (Adjudikator-Gedächtnis; nur Sim-Kern schreibt, DESIGN.md §8)
@@ -297,8 +317,8 @@ INSERT INTO item_catalog (id, name, category, weight_kg, kcal_per_unit, decay_ha
   ('gasoline',      'Benzin 5L',          'fuel',     4.00,  NULL,  NULL,    1, 0, 0.0, NULL);
 
 -- Welt-Singleton initialisieren (world_seed später vom App-Start gesetzt)
-INSERT INTO world (id, world_seed, tick, start_datetime, phase)
-VALUES (1, 0, 0, '2026-09-01T06:00:00', 1);
+INSERT INTO world (id, world_seed, tick, start_datetime, phase, survivor_sim_day)
+VALUES (1, 0, 0, '2026-09-01T06:00:00', 1, 0);
 
 -- Spieler-Gruppe + Spielercharakter (Platzhalter; App setzt Startposition)
 INSERT INTO groups (id, name, is_player_group) VALUES (1, 'Spieler', 1);

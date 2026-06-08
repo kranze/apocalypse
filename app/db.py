@@ -35,8 +35,17 @@ _MIGRATIONS = (
     " lat REAL NOT NULL,"
     " lon REAL NOT NULL,"
     " materialized INTEGER NOT NULL DEFAULT 0,"
-    " character_id INTEGER REFERENCES characters(id));",
+    " character_id INTEGER REFERENCES characters(id),"
+    " sex TEXT,"
+    " birth_tick INTEGER,"
+    " alive INTEGER NOT NULL DEFAULT 1,"
+    " group_id INTEGER);",
     "CREATE INDEX IF NOT EXISTS idx_survivors_geo ON survivors(lat, lon);",
+    "CREATE TABLE IF NOT EXISTS survivor_groups ("
+    " id INTEGER PRIMARY KEY,"
+    " created_tick INTEGER,"
+    " lat REAL,"
+    " lon REAL);",
     "CREATE TABLE IF NOT EXISTS resource_ledger ("
     " item_id TEXT PRIMARY KEY REFERENCES item_catalog(id),"
     " expected_total REAL NOT NULL DEFAULT 0.0);",
@@ -81,6 +90,13 @@ _ADD_COLUMNS = (
     ("characters", "home_lon", "REAL"),
     ("characters", "satisfaction", "REAL NOT NULL DEFAULT 1.0"),
     ("characters", "daily_water_l", "REAL NOT NULL DEFAULT 2.5"),
+    # survivors-Erweiterungen (Issue #18)
+    ("survivors", "sex", "TEXT"),
+    ("survivors", "birth_tick", "INTEGER"),
+    ("survivors", "alive", "INTEGER NOT NULL DEFAULT 1"),
+    ("survivors", "group_id", "INTEGER"),
+    # Survivor-Migrations-Sim: zuletzt verarbeiteter Tag (Issue #19)
+    ("world", "survivor_sim_day", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 

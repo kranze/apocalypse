@@ -3,9 +3,16 @@
 Eisernes Prinzip: Nur der Sim-Kern schreibt. Verteilung ist eine rein
 deterministische Funktion aus world_seed + Bevölkerungsgitter. Survivor-Zeilen
 sind KEIN Ressourcen-Gut: sie berühren weder resource_ledger noch resource_audit.
+
+birth_tick-Konvention (Issue #18):
+    Tick 0 = Kollaps-Zeitpunkt. Überlebende werden VOR dem Kollaps geboren,
+    daher gilt: birth_tick = -(age_years * 525_600)  (negativ).
+    Aktuelles Alter in Jahren = (current_tick - birth_tick) / 525_600.
+    525_600 = Minuten pro Jahr (365 * 24 * 60).
 """
 from __future__ import annotations
 
+import json
 import math
 import random
 import sqlite3
@@ -13,11 +20,22 @@ from typing import Sequence
 
 from ..db import get_world_seed
 from .identity import generate_identity
+from .locale import age_weights
 from .popgrid import load_grid
 
 
 # Halbe Zellbreite des Bevölkerungsgitters (~0.25°-Zellen, also ±0.125°).
 _HALF_CELL = 0.125
+
+# Minuten pro Jahr (365 * 24 * 60); für birth_tick-Berechnung.
+_MINUTES_PER_YEAR: int = 525_600
+
+# Maximaldistanz in Metern für Wohnhaus-Suche beim Materialisieren.
+_HOUSE_SEARCH_RADIUS_M: float = 150.0
+
+# Location-Typen, die als Wohnhaus gelten (primär) und Fallback-Gebäude.
+_HOUSE_TYPES = frozenset({"house"})
+_BUILDING_TYPES = frozenset({"house", "building", "apartment", "residential"})
 
 
 def spawn_survivors(
@@ -83,22 +101,61 @@ def spawn_survivors(
         k=total,
     )
 
+    # Altersgruppengewichte einmal laden (prozessweit gecacht via lru_cache)
+    age_brackets = age_weights()  # [((lo, hi), weight), ...]
+    bracket_ranges = [b[0] for b in age_brackets]
+    bracket_weights_list = [b[1] for b in age_brackets]
+    total_age_weight = sum(bracket_weights_list)
+    # Kumulative Gewichte für schnelles Sampling
+    cum_age_weights: list[float] = []
+    running = 0.0
+    for w in bracket_weights_list:
+        running += w
+        cum_age_weights.append(running)
+
     # Jitter innerhalb der Zelle: deterministisch aus separatem RNG-State
     # (RNG läuft deterministisch weiter nach den choices-Calls)
-    rows: list[tuple[float, float]] = []
-    for cell_idx in cell_indices:
+    # Gleichzeitig sex und birth_tick pro Survivor deterministisch aus
+    # einem survivor-spezifischen RNG (Seed: f"{seed}:{survivor_id}").
+    # survivor_id = 1-basiert, da SQLite AUTOINCREMENT bei INSERT ab 1 startet.
+    rows: list[tuple[float, float, str, int]] = []
+    for i, cell_idx in enumerate(cell_indices):
         cell_lat = lats[cell_idx]
         cell_lon = lons[cell_idx]
         jitter_lat = rng.uniform(-_HALF_CELL, _HALF_CELL)
         jitter_lon = rng.uniform(-_HALF_CELL, _HALF_CELL)
-        rows.append((cell_lat + jitter_lat, cell_lon + jitter_lon))
+        s_lat = cell_lat + jitter_lat
+        s_lon = cell_lon + jitter_lon
+
+        # survivor_id ist 1-basiert (i+1, da Tabelle geleert und frisch befüllt)
+        survivor_id = i + 1
+        srng = random.Random(f"{seed}:{survivor_id}")
+
+        # Geschlecht: ~50/50
+        sex = srng.choice(("m", "f"))
+
+        # Alter: gewichtetes Sampling aus Altersgruppen
+        r_age = srng.uniform(0.0, total_age_weight)
+        running_w = 0.0
+        lo, hi = bracket_ranges[-1]  # Sicherheitsnetz
+        for (bracket_lo, bracket_hi), w in zip(bracket_ranges, bracket_weights_list):
+            running_w += w
+            if r_age <= running_w:
+                lo, hi = bracket_lo, bracket_hi
+                break
+        age_years = srng.randint(lo, hi)
+
+        # birth_tick: negativ (vor Kollaps); Alter = (current_tick - birth_tick) / 525_600
+        birth_tick = -(age_years * _MINUTES_PER_YEAR)
+
+        rows.append((s_lat, s_lon, sex, birth_tick))
 
     # Tabelle leeren (falls partiell befüllt oder anderer seed)
     conn.execute("DELETE FROM survivors;")
 
-    # Bulk-Insert in einer Transaktion
+    # Bulk-Insert in einer Transaktion (alive=1 DEFAULT, group_id=NULL DEFAULT)
     conn.executemany(
-        "INSERT INTO survivors (lat, lon) VALUES (?, ?);",
+        "INSERT INTO survivors (lat, lon, sex, birth_tick) VALUES (?, ?, ?, ?);",
         rows,
     )
     conn.commit()
@@ -127,7 +184,7 @@ def materialize_in_bbox(
         character_ids der neu angelegten NPCs.
     """
     rows = conn.execute(
-        "SELECT id, lat, lon FROM survivors "
+        "SELECT id, lat, lon, sex, birth_tick FROM survivors "
         "WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? AND materialized = 0;",
         (min_lat, max_lat, min_lon, max_lon),
     ).fetchall()
@@ -143,12 +200,71 @@ def materialize_in_bbox(
     world_seed = world_row["world_seed"]
     start_datetime = world_row["start_datetime"]
 
+    # Alle Gebäude in der erweiterten Bbox laden (für Wohnhaus-Suche).
+    # Bbox leicht vergrößern um _HOUSE_SEARCH_RADIUS_M, damit Häuser knapp
+    # außerhalb der Survivor-Bbox gefunden werden.
+    search_pad_deg = _HOUSE_SEARCH_RADIUS_M / 111_320.0
+    house_candidates = conn.execute(
+        "SELECT id, type, lat, lon, footprint_json FROM locations "
+        "WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? "
+        "AND type IN ('house','building','apartment','residential');",
+        (
+            min_lat - search_pad_deg,
+            max_lat + search_pad_deg,
+            min_lon - search_pad_deg,
+            max_lon + search_pad_deg,
+        ),
+    ).fetchall()
+
+    def _footprint_centroid(footprint_json: str | None, fallback_lat: float, fallback_lon: float) -> tuple[float, float]:
+        """Berechnet den Zentroid eines Footprint-Polygons, sonst Fallback."""
+        if not footprint_json:
+            return fallback_lat, fallback_lon
+        try:
+            pts = json.loads(footprint_json)  # [[lat, lon], ...]
+            if not pts:
+                return fallback_lat, fallback_lon
+            avg_lat = sum(p[0] for p in pts) / len(pts)
+            avg_lon = sum(p[1] for p in pts) / len(pts)
+            return avg_lat, avg_lon
+        except Exception:
+            return fallback_lat, fallback_lon
+
+    def _nearest_house(s_lat: float, s_lon: float) -> tuple[float, float]:
+        """Findet nächstes Wohnhaus; Fallback: nächstes Gebäude; sonst Original."""
+        best_house_dist = float("inf")
+        best_house_pos: tuple[float, float] | None = None
+        best_any_dist = float("inf")
+        best_any_pos: tuple[float, float] | None = None
+
+        for loc in house_candidates:
+            loc_lat, loc_lon = _footprint_centroid(loc["footprint_json"], loc["lat"], loc["lon"])
+            dist = _haversine_m(s_lat, s_lon, loc_lat, loc_lon)
+            if loc["type"] in _HOUSE_TYPES:
+                if dist < best_house_dist:
+                    best_house_dist = dist
+                    best_house_pos = (loc_lat, loc_lon)
+            if dist < best_any_dist:
+                best_any_dist = dist
+                best_any_pos = (loc_lat, loc_lon)
+
+        if best_house_pos is not None and best_house_dist <= _HOUSE_SEARCH_RADIUS_M:
+            return best_house_pos
+        if best_any_pos is not None and best_any_dist <= _HOUSE_SEARCH_RADIUS_M:
+            return best_any_pos
+        return s_lat, s_lon  # Originalkoordinate als letzter Fallback
+
     character_ids: list[int] = []
 
     for row in rows:
         survivor_id = row["id"]
         s_lat = row["lat"]
         s_lon = row["lon"]
+        db_sex = row["sex"]
+        db_birth_tick = row["birth_tick"]
+
+        # Platzierung im nächsten Wohnhaus
+        npc_lat, npc_lon = _nearest_house(s_lat, s_lon)
 
         identity = generate_identity(
             survivor_id=survivor_id,
@@ -157,6 +273,20 @@ def materialize_in_bbox(
             world_seed=world_seed,
             start_datetime=start_datetime,
         )
+
+        # Gespeicherte sex/birth_tick aus der DB-Zeile gewinnen (Konsistenz).
+        # generate_identity liefert Name/Beruf; sex/Geburtsdatum werden
+        # durch die in spawn_survivors festgelegten Werte überschrieben.
+        final_sex = db_sex if db_sex is not None else identity["sex"]
+
+        # birth_tick → birthdate (ISO-String) für die characters-Tabelle
+        if db_birth_tick is not None:
+            from datetime import datetime, timedelta
+            start_dt = datetime.fromisoformat(start_datetime)
+            birth_dt = start_dt + timedelta(minutes=db_birth_tick)  # db_birth_tick ist negativ
+            final_birthdate = birth_dt.date().isoformat()
+        else:
+            final_birthdate = identity["birthdate"]
 
         # NPC-Zeile mit echter Identitaet aus generate_identity
         conn.execute(
@@ -168,11 +298,11 @@ def materialize_in_bbox(
             "1.0, 1.0, 1, 2000.0, 2.0);",
             (
                 identity["name"],
-                identity["sex"],
-                identity["birthdate"],
+                final_sex,
+                final_birthdate,
                 identity["profession"],
-                s_lat,
-                s_lon,
+                npc_lat,
+                npc_lon,
             ),
         )
         char_id = conn.execute("SELECT last_insert_rowid();").fetchone()[0]

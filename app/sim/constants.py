@@ -64,3 +64,62 @@ BEACON_CONTACT_PER_DAY = 0.5
 # --- Bilanz-Prüfung -----------------------------------------------------
 # Zuwachs über dieser Toleranz ohne Quelle = Bug-Alarm (Schritt 1: keine Quellen).
 AUDIT_EPS = 1e-6
+
+# --- Sterbe-Modell (Issue #20) ------------------------------------------
+# Altersklassen-Grenzen in Jahren (untere Kante, exkl. Obergrenze der letzten).
+# Reihenfolge muss mit SURVIVOR_BASE_SURVIVE_PER_DAY übereinstimmen.
+SURVIVOR_AGE_THRESHOLDS: tuple[int, ...] = (0, 1, 5, 13, 65, 80)
+# Indizes: 0=Säugling(0-<1), 1=Kleinkind(1-<5), 2=Kind(5-<13),
+#          3=Erwachsener(13-<65), 4=Senior(65-<80), 5=Greis(80+)
+
+# Tägliche Basis-Überlebenschance je Altersklasse (ALLEIN, ohne Gruppe).
+# Kalibrierung:
+#   Säugling allein: ~0.30/Tag → stirbt im Median nach ~1 Tag
+#   Kleinkind allein: ~0.75/Tag → stirbt im Median nach ~3 Tagen
+#   Kind allein: ~0.92/Tag → stirbt nach Wochen
+#   Erwachsener allein: ~0.997/Tag → stirbt nach Monaten/Jahren
+#   Senior allein: ~0.990/Tag → etwas schneller
+#   Greis allein: ~0.975/Tag → merklich schneller
+SURVIVOR_BASE_SURVIVE_PER_DAY: tuple[float, ...] = (
+    0.30,   # 0: Säugling  (0-<1 J.)
+    0.75,   # 1: Kleinkind (1-<5 J.)
+    0.92,   # 2: Kind      (5-<13 J.)
+    0.997,  # 3: Erwachsener (13-<65 J.)  — Referenz
+    0.990,  # 4: Senior    (65-<80 J.)
+    0.975,  # 5: Greis     (80+ J.)
+)
+
+# Erwachsenen-Altersband (fürsorgefähig): [ADULT_MIN, ADULT_MAX)
+SURVIVOR_ADULT_MIN_AGE: int = 13
+SURVIVOR_ADULT_MAX_AGE: int = 65
+
+# Gruppen-Boost: Multiplikator auf (1 - p_base), d.h. er verringert die
+# Sterbewahrscheinlichkeit. p_survive_group = 1 - (1-p_base)*boost_factor
+# Nur angewendet, wenn Gruppe mind. 1 Erwachsenen enthält (sonst kein Boost).
+# boost_factor = max(1.0, SURVIVOR_GROUP_BOOST_BASE + SURVIVOR_GROUP_BOOST_PER_ADULT * n_adults)
+# gedeckelt bei SURVIVOR_GROUP_BOOST_CAP.
+SURVIVOR_GROUP_BOOST_BASE: float = 2.0    # Basis-Boost mit 1 Erwachsenem
+SURVIVOR_GROUP_BOOST_PER_ADULT: float = 0.5  # +0.5 je weiterem Erwachsenem
+SURVIVOR_GROUP_BOOST_CAP: float = 5.0     # Deckel (≙ Faktor 5 auf Sterbe-p)
+
+# Kinder (0-12) kriegen nur dann den Boost, wenn mind. 1 Erwachsener in Gruppe.
+# Sonst bleibt ihr p_survive beim Allein-Basiswert.
+SURVIVOR_CHILD_MAX_AGE: int = 13  # exkl.
+
+# --- Survivor-Migrations-Sim (Issue #19) --------------------------------
+# Ab welchem Tag kippt das Vorzeichen: Gravitation → Flucht.
+SURVIVOR_T_FLEE: int = 30
+# Geruchsschwelle: smell = D_local * ramp(day); über diesem Wert → Flucht.
+SURVIVOR_SMELL_THRESHOLD: float = 5_000.0
+# Ramp-Funktion: smell = D_local * min(day / RAMP_DAYS, 1.0)
+SURVIVOR_RAMP_DAYS: int = 60
+# Maximale Wanderleistung pro Spieltag in km (realistisch ~25 km/Tag).
+SURVIVOR_MAX_STEP_KM: float = 25.0
+# Treffdistanz fürs Gruppieren in km.
+SURVIVOR_MEET_DIST_KM: float = 2.0
+# Gewichtung: Dichte-Gradient vs. Anziehung zu anderen Survivors/Gruppen.
+SURVIVOR_GRAVITY_WEIGHT: float = 0.7
+SURVIVOR_SOCIAL_WEIGHT: float = 0.2
+SURVIVOR_NOISE_WEIGHT: float = 0.1
+# Bucket-Größe für den Spatial-Grid-Hash beim Gruppieren (in Grad, ~11 km).
+SURVIVOR_BUCKET_DEG: float = 0.1
