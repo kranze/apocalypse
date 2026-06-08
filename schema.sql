@@ -261,7 +261,9 @@ CREATE TABLE survivors (
     sex             TEXT,                        -- 'm' oder 'f'
     birth_tick      INTEGER,                     -- Tick des Geburtstags (negativ = vor Kollaps)
     alive           INTEGER NOT NULL DEFAULT 1,  -- 1 = lebt, 0 = tot
-    group_id        INTEGER                      -- NULL = keine Gruppe; FK zu survivor_groups
+    group_id        INTEGER,                     -- NULL = keine Gruppe; FK zu survivor_groups
+    home_lat        REAL,                        -- Startposition (Heimat-Anker, Issue #29)
+    home_lon        REAL                         -- Startposition (Heimat-Anker, Issue #29)
 );
 CREATE INDEX idx_survivors_geo ON survivors(lat, lon);
 

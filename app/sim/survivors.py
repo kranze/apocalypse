@@ -72,11 +72,12 @@ def spawn_survivors(
     int
         Anzahl eingefügter Zeilen (== total).
     """
-    # Idempotenz-Check mit Selbstheilung für stale DBs (birth_tick IS NULL)
+    # Idempotenz-Check mit Selbstheilung für stale DBs (birth_tick IS NULL
+    # oder home_lat IS NULL aus Zeiten vor Issue #29).
     existing = conn.execute("SELECT COUNT(*) FROM survivors;").fetchone()[0]
     if not force and existing == total:
         null_count = conn.execute(
-            "SELECT COUNT(*) FROM survivors WHERE birth_tick IS NULL;"
+            "SELECT COUNT(*) FROM survivors WHERE birth_tick IS NULL OR home_lat IS NULL;"
         ).fetchone()[0]
         if null_count == 0:
             return total
@@ -159,14 +160,15 @@ def spawn_survivors(
         # birth_tick: negativ (vor Kollaps); Alter = (current_tick - birth_tick) / 525_600
         birth_tick = -(age_years * _MINUTES_PER_YEAR)
 
-        rows.append((s_lat, s_lon, sex, birth_tick))
+        # home_lat/home_lon = initiale Spawn-Position (Heimat-Anker, Issue #29)
+        rows.append((s_lat, s_lon, sex, birth_tick, s_lat, s_lon))
 
     # Tabelle leeren (falls partiell befüllt oder anderer seed)
     conn.execute("DELETE FROM survivors;")
 
     # Bulk-Insert in einer Transaktion (alive=1 DEFAULT, group_id=NULL DEFAULT)
     conn.executemany(
-        "INSERT INTO survivors (lat, lon, sex, birth_tick) VALUES (?, ?, ?, ?);",
+        "INSERT INTO survivors (lat, lon, sex, birth_tick, home_lat, home_lon) VALUES (?, ?, ?, ?, ?, ?);",
         rows,
     )
     conn.commit()

@@ -123,3 +123,18 @@ SURVIVOR_SOCIAL_WEIGHT: float = 0.2
 SURVIVOR_NOISE_WEIGHT: float = 0.1
 # Bucket-Größe für den Spatial-Grid-Hash beim Gruppieren (in Grad, ~11 km).
 SURVIVOR_BUCKET_DEG: float = 0.1
+
+# --- Bewegungsmodell v2: Heimat-Anker + Sesshaftigkeit (Issue #29) -------
+# Gewicht des Heimat-Ankers am Tag 0. Fällt linear auf ~0 nach DECAY_DAYS.
+# Bei 2.0 überwiegt der Heimat-Anker am Anfang deutlich (Gravitation = 0.7).
+SURVIVOR_HOME_WEIGHT: float = 2.0
+# Nach dieser Anzahl Tage ist der Heimat-Anker auf 0 abgefallen (linear).
+SURVIVOR_HOME_DECAY_DAYS: int = 21
+# Mobilitäts-Rampe: Tag 0 = 0 % Mobilität; nach RAMP_DAYS = 100 % (clip).
+# Tag 0–2 fast keine Bewegung, ab Tag 5 volle Mobilität.
+SURVIVOR_MOBILITY_RAMP_DAYS: int = 5
+# Geschwindigkeitsskalierung: Schrittweite_km = min(MAX_STEP, SPEED_SCALE * |v|).
+# |v| liegt bei starkem Sog (~1.5–2.5) oft bei 1–2; wir wollen dann ~25 km.
+# Kalibrierung: SPEED_SCALE * 1.0 = 12.5 km (mittel), * 2.0 = 25 km (voll).
+# => SPEED_SCALE = 12.5 km / 1.0 = 12.5
+SURVIVOR_SPEED_SCALE: float = 12.5

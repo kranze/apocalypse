@@ -97,6 +97,9 @@ _ADD_COLUMNS = (
     ("survivors", "group_id", "INTEGER"),
     # Survivor-Migrations-Sim: zuletzt verarbeiteter Tag (Issue #19)
     ("world", "survivor_sim_day", "INTEGER NOT NULL DEFAULT 0"),
+    # Heimat-Anker für Bewegungsmodell v2 (Issue #29)
+    ("survivors", "home_lat", "REAL"),
+    ("survivors", "home_lon", "REAL"),
 )
 
 

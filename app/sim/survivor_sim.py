@@ -30,12 +30,16 @@ from .constants import (
     SURVIVOR_GROUP_BOOST_BASE,
     SURVIVOR_GROUP_BOOST_CAP,
     SURVIVOR_GROUP_BOOST_PER_ADULT,
+    SURVIVOR_HOME_DECAY_DAYS,
+    SURVIVOR_HOME_WEIGHT,
     SURVIVOR_MAX_STEP_KM,
     SURVIVOR_MEET_DIST_KM,
+    SURVIVOR_MOBILITY_RAMP_DAYS,
     SURVIVOR_NOISE_WEIGHT,
     SURVIVOR_RAMP_DAYS,
     SURVIVOR_SMELL_THRESHOLD,
     SURVIVOR_SOCIAL_WEIGHT,
+    SURVIVOR_SPEED_SCALE,
     SURVIVOR_T_FLEE,
 )
 from .popgrid import load_grid
@@ -343,9 +347,11 @@ def step_day(conn: sqlite3.Connection, day: int) -> None:
     day:
         Spieltag (ganzzahlig, 0-basiert).
     """
-    # Alle lebenden Survivors laden (inkl. birth_tick für Sterbe-Modell)
+    # Alle lebenden Survivors laden (inkl. birth_tick für Sterbe-Modell,
+    # home_lat/home_lon für Heimat-Anker Issue #29)
     rows = conn.execute(
-        "SELECT id, lat, lon, group_id, birth_tick FROM survivors WHERE alive = 1;"
+        "SELECT id, lat, lon, group_id, birth_tick, home_lat, home_lon "
+        "FROM survivors WHERE alive = 1;"
     ).fetchall()
 
     if not rows:
@@ -449,31 +455,79 @@ def step_day(conn: sqlite3.Connection, day: int) -> None:
     noise_lat = raw_noise[inv_salt * 2]
     noise_lon = raw_noise[inv_salt * 2 + 1]
 
+    # --- Heimat-Anker (Issue #29) -----------------------------------------
+    # home_lat/home_lon: Fallback auf aktuelle Position bei NULL (Altzeilen).
+    home_lats_raw = np.array(
+        [r["home_lat"] if r["home_lat"] is not None else r["lat"] for r in rows],
+        dtype=np.float64,
+    )
+    home_lons_raw = np.array(
+        [r["home_lon"] if r["home_lon"] is not None else r["lon"] for r in rows],
+        dtype=np.float64,
+    )
+    # Für Gruppen: Heimat-Anker = Durchschnitt der Heimatpositionen der Mitglieder
+    home_lats = home_lats_raw.copy()
+    home_lons = home_lons_raw.copy()
+    if np.any(in_group_mask):
+        sum_hlat = np.bincount(inv_g, weights=home_lats_raw[in_group_mask], minlength=n_groups)
+        sum_hlon = np.bincount(inv_g, weights=home_lons_raw[in_group_mask], minlength=n_groups)
+        mean_hlat_g = sum_hlat / counts_g
+        mean_hlon_g = sum_hlon / counts_g
+        home_lats[in_group_mask] = mean_hlat_g[inv_g]
+        home_lons[in_group_mask] = mean_hlon_g[inv_g]
+
+    # Richtungsvektor Richtung Heimat (auf Einheitslänge normiert)
+    home_dlat = home_lats - rep_lats
+    home_dlon = home_lons - rep_lons
+    home_mag = np.sqrt(home_dlat ** 2 + home_dlon ** 2)
+    home_nonzero = home_mag > 0.0
+    home_dlat[home_nonzero] /= home_mag[home_nonzero]
+    home_dlon[home_nonzero] /= home_mag[home_nonzero]
+
+    # Heimat-Gewicht: linear von HOME_WEIGHT (Tag 0) auf 0 nach HOME_DECAY_DAYS
+    w_home = SURVIVOR_HOME_WEIGHT * max(0.0, 1.0 - day / max(SURVIVOR_HOME_DECAY_DAYS, 1))
+
     # --- Bewegungsrichtung zusammensetzen --------------------------------
+    # Resultierender Vektor (NICHT normiert) — Betrag bestimmt Schrittweite.
     dir_lat = (
-        SURVIVOR_GRAVITY_WEIGHT * mode * dlat_grad
+        w_home * home_dlat
+        + SURVIVOR_GRAVITY_WEIGHT * mode * dlat_grad
         + SURVIVOR_SOCIAL_WEIGHT * soc_dlat
         + SURVIVOR_NOISE_WEIGHT * noise_lat
     )
     dir_lon = (
-        SURVIVOR_GRAVITY_WEIGHT * mode * dlon_grad
+        w_home * home_dlon
+        + SURVIVOR_GRAVITY_WEIGHT * mode * dlon_grad
         + SURVIVOR_SOCIAL_WEIGHT * soc_dlon
         + SURVIVOR_NOISE_WEIGHT * noise_lon
     )
 
-    # Normieren
+    # --- Schrittweite ~ Sog-Stärke (Sesshaftigkeit) ----------------------
+    # Schrittweite_km = min(MAX_STEP_KM, SPEED_SCALE * |resultant|)
+    # Schwacher Sog -> kleiner Schritt; starker Sog -> bis 25 km.
     dir_mag = np.sqrt(dir_lat ** 2 + dir_lon ** 2)
     nonzero = dir_mag > 0.0
-    dir_lat[nonzero] /= dir_mag[nonzero]
-    dir_lon[nonzero] /= dir_mag[nonzero]
 
-    # --- Schrittweite begrenzen (MAX_STEP_KM) ----------------------------
+    # Normierte Richtung (Einheitsvektor)
+    dir_lat_norm = np.zeros_like(dir_lat)
+    dir_lon_norm = np.zeros_like(dir_lon)
+    dir_lat_norm[nonzero] = dir_lat[nonzero] / dir_mag[nonzero]
+    dir_lon_norm[nonzero] = dir_lon[nonzero] / dir_mag[nonzero]
+
+    # Schrittweite in km: skaliert mit Sog-Betrag, gedeckelt bei MAX_STEP_KM
+    step_km = np.minimum(SURVIVOR_MAX_STEP_KM, SURVIVOR_SPEED_SCALE * dir_mag)
+
+    # --- Mobilitäts-Rampe (Issue #29): Tag 0..RAMP_DAYS fast keine Bewegung ---
+    mobility = float(np.clip(day / max(SURVIVOR_MOBILITY_RAMP_DAYS, 1), 0.0, 1.0))
+    step_km *= mobility
+
+    # --- In Grad umrechnen (cos(lat)-Korrektur) ---------------------------
     km_per_deg_lat = 111.32
     cos_lat = np.cos(np.radians(rep_lats))
     km_per_deg_lon = 111.32 * cos_lat
 
-    step_lat_deg = dir_lat * (SURVIVOR_MAX_STEP_KM / km_per_deg_lat)
-    step_lon_deg = dir_lon * (SURVIVOR_MAX_STEP_KM / np.maximum(km_per_deg_lon, 1e-6))
+    step_lat_deg = dir_lat_norm * (step_km / km_per_deg_lat)
+    step_lon_deg = dir_lon_norm * (step_km / np.maximum(km_per_deg_lon, 1e-6))
 
     # Neue Positionen: Individuen bewegen sich von ihren EIGENEN Koordinaten,
     # aber mit der Richtung ihres Gruppen-Repräsentanten (Zentroid).
