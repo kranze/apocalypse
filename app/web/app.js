@@ -660,17 +660,31 @@ async function submitOnboarding() {
   const errEl = document.getElementById("onboard-error");
   errEl.classList.add("hidden");
   const btn = document.getElementById("btn-start");
-  btn.disabled = true; btn.textContent = "Welt wird geladen …";
+  btn.disabled = true; btn.textContent = "Spiel wird gestartet …";
   try {
     const r = await postJSON("/game/new", profile);
-    showIntro(r.intro);
+    // Erfolg: Spiel sofort anzeigen, Karte auf home zentrieren.
+    const center = r.home;
+    const startZoom = Math.max(VIEWPORT_MIN_ZOOM, CHUNK_MIN_ZOOM); // >= 14 damit Chunk-Load triggert
+    document.getElementById("onboarding").classList.add("hidden");
+    document.getElementById("intro").classList.add("hidden");
+    document.getElementById("hud").classList.remove("hidden");
+    if (!_mapReady) buildMap(center); else map.setView(center, startZoom);
+    if (_mapReady && map) map.setView(center, startZoom);
+    if (!_hudWired) wireHud();
+    // Intro in den Chat schreiben (direkt, kein loadChatHistory nötig — frisch).
+    _chatHistoryLoaded = true; // verhindert doppeltes Laden
+    chat("claude", r.intro);
+    await refreshState();
+    if (!_loopStarted) { setInterval(tickFrame, FRAME_MS); _loopStarted = true; }
+    // Heimat-Chunks sofort im Hintergrund laden (kein Warten auf moveend).
+    ensureChunksInView().then(() => refreshLocationsInView()).catch(() => {});
   } catch (e) {
+    // Fehler: Meldung anzeigen, Button reaktivieren — kein Frozen-State.
     errEl.textContent = {
       geocode_failed: "Adresse nicht gefunden — bitte Koordinaten manuell angeben (Abschnitt unten).",
-      osm_unavailable: "Kartendaten (OSM) gerade nicht erreichbar — bitte gleich nochmal versuchen.",
     }[e.message] || ("Fehler: " + e.message);
     errEl.classList.remove("hidden");
-  } finally {
     btn.disabled = false; btn.textContent = "Spiel starten";
   }
 }

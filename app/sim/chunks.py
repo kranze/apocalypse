@@ -108,6 +108,8 @@ def ensure_chunk_loaded(
         }
 
     # Chunk noch nicht geladen: Bbox holen, parsen, upserten.
+    # load_bbox ruft intern fetch_bbox_combined auf → EIN Overpass-Request
+    # liefert Gebäude + Straßen; roads._graph.merge_ways wird darin aufgerufen.
     min_lat, min_lon, max_lat, max_lon = chunk_bbox(cx, cy)
     try:
         count = loader.load_bbox(min_lat, min_lon, max_lat, max_lon, conn)
@@ -137,11 +139,10 @@ def ensure_chunk_loaded(
             "reason": str(exc),
         }
 
-    # Straßen für diesen Chunk laden (additiver Graph; Fehler darf nicht crashen).
-    try:
-        roads.ensure_roads_for_chunk(cx, cy)
-    except Exception:
-        pass  # Straßen-Fehler ist nicht kritisch für den Location-Load
+    # Straßen wurden bereits in load_bbox (via fetch_bbox_combined + merge_ways)
+    # in den prozessweiten Graph gemergt. Den Chunk als straßen-geladen markieren,
+    # damit ensure_roads_for_chunk ihn nicht erneut fetcht.
+    roads._roads_loaded_chunks.add((cx, cy))
 
     # Survivors in diesem Chunk lazy materialisieren (Reihenfolge: erst
     # Locations geladen → Wohnhaus-Kandidaten vorhanden; dann Snap).
@@ -253,6 +254,12 @@ def ensure_bbox_bulk(
         [(cx, cy, current_tick) for cx, cy in cells],
     )
     conn.commit()
+
+    # Straßen wurden in load_bbox via fetch_bbox_combined gemergt; alle Chunks
+    # als straßen-geladen markieren, damit ensure_roads_for_chunk nicht
+    # erneut fetcht.
+    for cx, cy in cells:
+        roads._roads_loaded_chunks.add((cx, cy))
 
     # Survivors für die gesamte Bbox einmal lazy materialisieren (idempotent;
     # Locations sind jetzt vorhanden → Wohnhaus-Snap hat Kandidaten).

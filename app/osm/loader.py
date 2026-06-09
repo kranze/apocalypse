@@ -14,7 +14,7 @@ import sqlite3
 from typing import Any
 
 from .. import config, db
-from . import overpass, parser
+from . import overpass, parser, roads as _roads
 
 
 def _generation_seed(world_seed: int, osm_id: str) -> int:
@@ -55,6 +55,38 @@ def _upsert_records(
     return len(records)
 
 
+def load_bbox_combined(
+    min_lat: float,
+    min_lon: float,
+    max_lat: float,
+    max_lon: float,
+    conn: sqlite3.Connection,
+    *,
+    force_refresh: bool = False,
+) -> int:
+    """Lädt Gebäude UND Straßen in EINEM Overpass-Request für eine Bbox.
+
+    Nutzt overpass.fetch_bbox_combined (ein Round-Trip statt zwei/drei).
+    - parser.parse extrahiert nur Gebäude (ignoriert highway-Ways per eigenem Filter).
+    - roads._graph.merge_ways extrahiert nur Straßen (ignoriert building-Ways per
+      eigenem highway-Pflicht-Filter in merge_ways).
+    Beide Filter wirken auf dieselbe Rohantwort; kein Doppel-Fetch nötig.
+
+    Gibt die Anzahl der geupserteten Locations zurück.
+    Die Connection muss vom Aufrufer verwaltet werden (commit/rollback).
+    """
+    data = overpass.fetch_bbox_combined(
+        min_lat, min_lon, max_lat, max_lon, force=force_refresh
+    )
+    records = parser.parse(data)
+    world_seed = db.get_world_seed(conn)
+    count = _upsert_records(conn, records, world_seed)
+    # Straßen-Teil in den additiven prozessweiten Graph mergen (Prozess-State,
+    # kein DB-Schreiben — Eisernes Prinzip gewahrt). merge_ways ist idempotent.
+    _roads._graph.merge_ways(data)
+    return count
+
+
 def load_bbox(
     min_lat: float,
     min_lon: float,
@@ -64,19 +96,21 @@ def load_bbox(
     *,
     force_refresh: bool = False,
 ) -> int:
-    """Lädt alle Locations in einer Bbox, upsertet sie in die DB.
+    """Lädt Gebäude UND Straßen in EINEM Overpass-Request für eine Bbox.
 
-    Nutzt overpass.fetch_bbox (Disk-Cache, Throttle) + die vorhandene Upsert-
-    Logik. Rand-Overlap zwischen benachbarten Chunks wird durch den Upsert auf
+    Delegiert intern an load_bbox_combined (ein Round-Trip statt vormals zwei).
+    Bleibt als öffentlicher Einstiegspunkt erhalten (Rückwärtskompatibilität,
+    Monkeypatch-Anker in Tests).
+
+    Rand-Overlap zwischen benachbarten Chunks wird durch den Upsert auf
     ``osm_id`` dedupliziert — kein Doppeleintrag möglich.
 
     Gibt die Anzahl der geupserteten (neuen + aktualisierten) Locations zurück.
     Die Connection muss vom Aufrufer verwaltet werden (commit/rollback).
     """
-    data = overpass.fetch_bbox(min_lat, min_lon, max_lat, max_lon, force=force_refresh)
-    records = parser.parse(data)
-    world_seed = db.get_world_seed(conn)
-    return _upsert_records(conn, records, world_seed)
+    return load_bbox_combined(
+        min_lat, min_lon, max_lat, max_lon, conn, force_refresh=force_refresh
+    )
 
 
 def load_area(

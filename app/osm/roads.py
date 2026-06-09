@@ -141,6 +141,10 @@ class RoadGraph:
             if el.get("type") != "way":
                 continue
             tags = el.get("tags", {}) or {}
+            # Nur highway-Ways aufnehmen (Pflicht-Filter für kombinierte Queries,
+            # bei denen building-Ways und highway-Ways gemischt ankommen).
+            if not tags.get("highway"):
+                continue
             if tags.get("highway") in _EXCLUDE_HIGHWAY:
                 continue
             node_ids = el.get("nodes") or []

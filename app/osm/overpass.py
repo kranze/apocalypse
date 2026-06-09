@@ -187,3 +187,71 @@ def fetch_bbox(
         return json.loads(cache_file.read_text(encoding="utf-8"))
     query = build_bbox_query(min_lat, min_lon, max_lat, max_lon)
     return _do_net_fetch(query, cache_file)
+
+
+def build_bbox_query_combined(
+    min_lat: float, min_lon: float, max_lat: float, max_lon: float
+) -> str:
+    """Overpass-QL: Gebäude UND Straßen in einer einzigen Bbox-Abfrage (Union).
+
+    Liefert way["building"] und way["highway"] in einer Antwort (out geom;),
+    sodass parser.parse die Gebäude und roads.merge_ways die Straßen extrahieren
+    können — jeweils anhand ihrer eigenen Tag-Filter.
+    """
+    bbox = f"{min_lat:.6f},{min_lon:.6f},{max_lat:.6f},{max_lon:.6f}"
+    return f"""
+[out:json][timeout:{config.OVERPASS_TIMEOUT_S}];
+(
+  way["building"]({bbox});
+  node["shop"]({bbox});
+  node["amenity"~"fuel|pharmacy|hospital|doctors"]({bbox});
+  way["highway"]({bbox});
+);
+out geom;
+""".strip()
+
+
+def _bbox_combined_cache_key(
+    min_lat: float, min_lon: float, max_lat: float, max_lon: float
+) -> str:
+    """Stabiler Cache-Key für die kombinierte Bbox-Abfrage (Gebäude + Straßen).
+
+    Separater Key vom reinen Gebäude-Cache, damit beide Varianten unabhängig
+    gecacht werden können.
+    """
+    raw = (
+        f"bbox_combined|{QUERY_VERSION}"
+        f"|{min_lat:.6f}|{min_lon:.6f}|{max_lat:.6f}|{max_lon:.6f}"
+    )
+    return "bbox_combined_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _bbox_combined_cache_file(
+    min_lat: float, min_lon: float, max_lat: float, max_lon: float
+) -> Path:
+    return config.OSM_CACHE_DIR / f"{_bbox_combined_cache_key(min_lat, min_lon, max_lat, max_lon)}.json"
+
+
+def fetch_bbox_combined(
+    min_lat: float,
+    min_lon: float,
+    max_lat: float,
+    max_lon: float,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Liefert Gebäude + Straßen in EINER Overpass-Antwort für eine Bbox.
+
+    Eigener Cache-Key (``bbox_combined``), damit Gebäude-Only- und kombinierte
+    Queries unabhängig gecacht werden. Throttle und Mirror-Fallback werden
+    wiederverwendet (via ``_do_net_fetch``).
+
+    Die Antwort enthält way["building"]-, node["shop"/"amenity"]- und
+    way["highway"]-Elemente gemischt. Aufrufer (parser.parse bzw.
+    roads.merge_ways) filtern jeweils nach ihren eigenen Tag-Bedingungen.
+    """
+    cache_file = _bbox_combined_cache_file(min_lat, min_lon, max_lat, max_lon)
+    if cache_file.exists() and not force:
+        return json.loads(cache_file.read_text(encoding="utf-8"))
+    query = build_bbox_query_combined(min_lat, min_lon, max_lat, max_lon)
+    return _do_net_fetch(query, cache_file)
