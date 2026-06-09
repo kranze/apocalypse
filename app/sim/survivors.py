@@ -163,7 +163,9 @@ def spawn_survivors(
         # home_lat/home_lon = initiale Spawn-Position (Heimat-Anker, Issue #29)
         rows.append((s_lat, s_lon, sex, birth_tick, s_lat, s_lon))
 
-    # Tabelle leeren (falls partiell befüllt oder anderer seed)
+    # Tabelle leeren (falls partiell befüllt oder anderer seed);
+    # survivor_groups ebenfalls leeren, damit kein Stale-State bleibt.
+    conn.execute("DELETE FROM survivor_groups;")
     conn.execute("DELETE FROM survivors;")
 
     # Bulk-Insert in einer Transaktion (alive=1 DEFAULT, group_id=NULL DEFAULT)

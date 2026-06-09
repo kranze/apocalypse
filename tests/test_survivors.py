@@ -486,3 +486,66 @@ class TestCountNear:
 
         count = surv_mod.count_near(conn, center_lat, center_lon, 500.0)
         assert count == 3
+
+
+# ---------------------------------------------------------------------------
+# h) spawn_survivors leert survivor_groups im Regenerations-Pfad (Issue #41)
+# ---------------------------------------------------------------------------
+
+class TestSpawnClearsSurvivorGroups:
+    def test_force_clears_survivor_groups(self, conn, monkeypatch):
+        """spawn_survivors(force=True) loescht survivor_groups und setzt alle group_id auf NULL."""
+        _patch_grid(monkeypatch)
+
+        # Vorab: survivor_groups mit zwei Zeilen befuellen
+        conn.execute(
+            "INSERT INTO survivor_groups (id, lat, lon) VALUES (1, 0.0, 0.0);"
+        )
+        conn.execute(
+            "INSERT INTO survivor_groups (id, lat, lon) VALUES (2, 10.0, 10.0);"
+        )
+        conn.commit()
+
+        groups_before = conn.execute("SELECT COUNT(*) FROM survivor_groups;").fetchone()[0]
+        assert groups_before == 2, "Voraussetzung: 2 Gruppen vorhanden"
+
+        # Regeneration erzwingen
+        surv_mod.spawn_survivors(conn, total=50, seed=42, force=True)
+
+        # survivor_groups muss leer sein
+        groups_after = conn.execute("SELECT COUNT(*) FROM survivor_groups;").fetchone()[0]
+        assert groups_after == 0, f"Erwartet 0 survivor_groups nach force-spawn, got {groups_after}"
+
+        # Alle survivors muessen group_id = NULL haben
+        non_null_group = conn.execute(
+            "SELECT COUNT(*) FROM survivors WHERE group_id IS NOT NULL;"
+        ).fetchone()[0]
+        assert non_null_group == 0, (
+            f"Erwartet alle survivors group_id=NULL, aber {non_null_group} haben einen Wert"
+        )
+
+        # Anzahl survivors stimmt
+        total_survivors = conn.execute("SELECT COUNT(*) FROM survivors;").fetchone()[0]
+        assert total_survivors == 50
+
+    def test_noop_path_does_not_clear_survivor_groups(self, conn, monkeypatch):
+        """Im No-op-Pfad (gleicher total, keine NULL-Spalten) bleiben survivor_groups unveraendert."""
+        _patch_grid(monkeypatch)
+
+        # Erst Survivors anlegen
+        surv_mod.spawn_survivors(conn, total=50, seed=42)
+
+        # Dann survivor_groups manuell befuellen
+        conn.execute(
+            "INSERT INTO survivor_groups (id, lat, lon) VALUES (1, 0.0, 0.0);"
+        )
+        conn.commit()
+
+        # No-op-Aufruf (gleicher total, kein force)
+        surv_mod.spawn_survivors(conn, total=50, seed=42)
+
+        # survivor_groups muss unveraendert sein
+        groups_after = conn.execute("SELECT COUNT(*) FROM survivor_groups;").fetchone()[0]
+        assert groups_after == 1, (
+            f"Im No-op-Pfad darf survivor_groups nicht geloescht werden, got {groups_after}"
+        )
