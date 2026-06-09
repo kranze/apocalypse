@@ -164,6 +164,89 @@ def ensure_chunk_loaded(
     }
 
 
+def ensure_bbox_bulk(
+    conn: sqlite3.Connection,
+    min_lat: float,
+    min_lon: float,
+    max_lat: float,
+    max_lon: float,
+) -> dict[str, Any]:
+    """Lädt den gesamten Bereich in EINER Overpass-Bbox-Query (statt N Einzelabfragen).
+
+    Strategie:
+    - Alle Chunks in der Bbox ermitteln.
+    - Sind ALLE bereits status='loaded' → kein Netz, sofort {mode:'noop'}.
+    - Sonst: EIN loader.load_bbox(gesamte Bbox) → alle Locations upserted;
+      danach ALLE abgedeckten Chunks als status='loaded' markieren.
+    - Bei Bulk-Fetch-Fehler: KEINE Chunks als loaded markieren;
+      Fallback auf ensure_chunk_loaded pro Chunk (toleriert Einzelfehler).
+    Rückgabe: {loaded_chunks, failed_chunks, new_locations, mode}.
+    WIRFT KEINE Exception.
+    """
+    cells = chunks_in_bbox(min_lat, min_lon, max_lat, max_lon)
+
+    if not cells:
+        return {"loaded_chunks": 0, "failed_chunks": 0, "new_locations": 0, "mode": "noop"}
+
+    # Noop-Gate: alle Chunks bereits geladen?
+    placeholders = ",".join("(?,?)" for _ in cells)
+    params_flat = [v for cx, cy in cells for v in (cx, cy)]
+    loaded_rows = conn.execute(
+        f"""
+        SELECT COUNT(*) AS cnt FROM world_chunks
+        WHERE (cx, cy) IN (VALUES {placeholders}) AND status = 'loaded';
+        """,
+        params_flat,
+    ).fetchone()
+
+    if loaded_rows is not None and loaded_rows["cnt"] == len(cells):
+        return {"loaded_chunks": 0, "failed_chunks": 0, "new_locations": 0, "mode": "noop"}
+
+    # Bulk-Fetch: eine Overpass-Query für den gesamten Bereich.
+    try:
+        new_locations = loader.load_bbox(min_lat, min_lon, max_lat, max_lon, conn)
+    except Exception:
+        # Bulk fehlgeschlagen → Fallback: Chunk-für-Chunk versuchen.
+        loaded = 0
+        failed = 0
+        for cx, cy in cells:
+            result = ensure_chunk_loaded(conn, cx, cy)
+            if result.get("ok"):
+                loaded += 1
+            else:
+                failed += 1
+        return {
+            "loaded_chunks": loaded,
+            "failed_chunks": failed,
+            "new_locations": 0,
+            "mode": "fallback",
+        }
+
+    # Bulk erfolgreich: alle Chunks als 'loaded' markieren.
+    tick_row = conn.execute("SELECT tick FROM world WHERE id = 1;").fetchone()
+    current_tick = int(tick_row["tick"]) if tick_row is not None else 0
+
+    conn.executemany(
+        """
+        INSERT INTO world_chunks (cx, cy, status, loaded_at_tick, building_count)
+        VALUES (?, ?, 'loaded', ?, 0)
+        ON CONFLICT(cx, cy) DO UPDATE SET
+            status         = 'loaded',
+            loaded_at_tick = excluded.loaded_at_tick
+        ;
+        """,
+        [(cx, cy, current_tick) for cx, cy in cells],
+    )
+    conn.commit()
+
+    return {
+        "loaded_chunks": len(cells),
+        "failed_chunks": 0,
+        "new_locations": new_locations,
+        "mode": "bulk",
+    }
+
+
 def ensure_chunks_in_bbox(
     conn: sqlite3.Connection,
     min_lat: float,

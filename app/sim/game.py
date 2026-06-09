@@ -98,7 +98,7 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
     # 5) Heimat-Chunk + Nachbarn laden (idempotent; Heimat-Chunk ist bereits
     #    im overpass-Cache aus dem Probe-Fetch oben → kein Netzaufruf mehr).
     #    Fehler bei Nachbar-Chunks sind tolerierbar; kritisch ist nur der Heimat-Chunk.
-    chunks.ensure_chunks_in_bbox(conn, *preload_bbox)
+    chunks.ensure_bbox_bulk(conn, *preload_bbox)
 
     # Heimat-Chunk-Check: mindestens der eigene Chunk muss geladen sein.
     home_cx, home_cy = chunks.chunk_key(lat, lon)

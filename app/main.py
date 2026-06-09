@@ -159,7 +159,7 @@ def ensure_chunks(req: EnsureChunksRequest) -> dict:
     with _chunk_load_lock:
         conn = db.get_connection()
         try:
-            chunk_summary = chunks_mod.ensure_chunks_in_bbox(
+            chunk_summary = chunks_mod.ensure_bbox_bulk(
                 conn,
                 req.min_lat,
                 req.min_lon,
