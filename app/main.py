@@ -5,6 +5,7 @@ Basis für den späteren Renderer (DESIGN.md §3 Weltsicht).
 """
 from __future__ import annotations
 
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -19,9 +20,14 @@ from .osm import loader
 from .sim import (
     adjudicator, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
+from .sim import chunks as chunks_mod
 from .sim import survivor_sim, survivors as survivors_mod
 from .sim.identity import generate_identity
 from .sim.locale import region_for
+
+# Serialisiert parallele Chunk-Lade-Requests (verhindert parallele Overpass-Bursts).
+# FastAPI-sync-Endpunkte laufen im Threadpool → normales threading.Lock ausreichend.
+_chunk_load_lock = threading.Lock()
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -93,6 +99,13 @@ class LootRequest(BaseModel):
     items: dict[str, float] | None = None  # None = alles nehmen
 
 
+class EnsureChunksRequest(BaseModel):
+    min_lat: float
+    min_lon: float
+    max_lat: float
+    max_lon: float
+
+
 _CHARACTER_COLS = (
     "id, name, type, group_id, age, lat, lon, hunger, thirst, sleep, injury, "
     "exposure, satisfaction, performance, is_alive, daily_kcal, daily_water_l, "
@@ -115,16 +128,78 @@ def load_osm(req: LoadOsmRequest) -> dict:
     )
 
 
+# Maximal erlaubte Bbox-Seitenlänge in Grad (≈ 11 km × 11 km = ca. 100 Chunks bei 0.01°).
+# Schützt vor riesigen Bbox-Anfragen aus dem Frontend.
+_BBOX_MAX_DEG = 0.1
+
+
+@app.post("/world/ensure-chunks")
+def ensure_chunks(req: EnsureChunksRequest) -> dict:
+    """Stellt sicher, dass alle Chunks in der Bbox geladen sind (lazy).
+
+    Ruft chunks.ensure_chunks_in_bbox + survivors.materialize_in_bbox auf.
+    Serialisiert parallele Requests via Lock (kein Overpass-Burst).
+    Begrenzt die Bbox-Größe auf _BBOX_MAX_DEG pro Seite.
+    Antwort: {loaded_chunks, new_locations, materialized}.
+    Eisernes Prinzip: nur Sim-Kern (chunks/survivors) schreibt.
+    """
+    # Bbox-Größen-Schutz: zu große Anfragen ablehnen.
+    lat_span = req.max_lat - req.min_lat
+    lon_span = req.max_lon - req.min_lon
+    if lat_span > _BBOX_MAX_DEG or lon_span > _BBOX_MAX_DEG:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Bbox zu groß: {lat_span:.4f}°×{lon_span:.4f}° "
+                f"(max {_BBOX_MAX_DEG}° pro Seite). "
+                "Bitte näher heranzoomen."
+            ),
+        )
+
+    with _chunk_load_lock:
+        conn = db.get_connection()
+        try:
+            chunk_summary = chunks_mod.ensure_chunks_in_bbox(
+                conn,
+                req.min_lat,
+                req.min_lon,
+                req.max_lat,
+                req.max_lon,
+            )
+            materialized_ids = survivors_mod.materialize_in_bbox(
+                conn,
+                req.min_lat,
+                req.min_lon,
+                req.max_lat,
+                req.max_lon,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    return {
+        "loaded_chunks": chunk_summary["loaded_chunks"],
+        "failed_chunks": chunk_summary["failed_chunks"],
+        "new_locations": chunk_summary["new_locations"],
+        "materialized": len(materialized_ids),
+    }
+
+
 @app.get("/locations")
 def list_locations(
     min_lat: float | None = Query(None),
     min_lon: float | None = Query(None),
     max_lat: float | None = Query(None),
     max_lon: float | None = Query(None),
+    limit: int = Query(5000, ge=1, le=20_000),
 ) -> list[dict]:
-    """Listet Locations, optional auf eine Bounding-Box gefiltert."""
+    """Listet Locations, optional auf eine Bounding-Box gefiltert.
+
+    `limit` begrenzt die Ergebnismenge (Default 5000, max 20000) als Schutz
+    gegen zu große Bboxen.
+    """
     where = []
-    params: list[float] = []
+    params: list = []
     bbox = (min_lat, min_lon, max_lat, max_lon)
     if all(v is not None for v in bbox):
         where = ["lat BETWEEN ? AND ?", "lon BETWEEN ? AND ?"]
@@ -133,7 +208,7 @@ def list_locations(
     sql = f"SELECT {_LOCATION_COLS} FROM locations"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY id;"
+    sql += f" ORDER BY id LIMIT {int(limit)};"
 
     conn = db.get_connection()
     try:

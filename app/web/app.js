@@ -191,23 +191,146 @@ function toggleRoster() {
 }
 
 // --- Locations ---------------------------------------------------------
-async function loadLocations() {
-  const locs = await getJSON("/locations");
-  for (const loc of locs) {
-    locData.set(loc.id, loc);
-    let m;
-    if (loc.footprint_json) {
-      // Gebäude als Umriss-Polygon — Klick irgendwo darauf wählt es aus.
-      try { m = L.polygon(JSON.parse(loc.footprint_json), styleFor(loc)); }
-      catch (e) { m = L.circleMarker([loc.lat, loc.lon], styleFor(loc)); }
-    } else {
-      m = L.circleMarker([loc.lat, loc.lon], styleFor(loc)); // POI ohne Umriss
-    }
-    m.on("click", (e) => { L.DomEvent.stopPropagation(e); selectLocation(loc.id); });
-    m.addTo(map);
-    markers.set(loc.id, m);
+// Viewport-Culling: nur sichtbare Locations laden/zeichnen.
+// Marker-Registry (markers Map) hält id -> Layer; idempotent (nie doppelt).
+// Beim Verlassen des Viewports werden off-screen Marker entfernt (außer der
+// aktuell ausgewählten Location — die bleibt, bis das Panel geschlossen wird).
+
+// Zoom-Schwelle: unter Zoom 13 (Bbox > ~10 km Seite) wird nicht geladen,
+// um riesige Queries zu vermeiden.
+const VIEWPORT_MIN_ZOOM = 13;
+
+// Zoom-Schwelle für Chunk-Nachladen: erst ab Zoom 14 (Bbox ≤ ~5 km Seite).
+// Schützt vor zu großen Bboxen, die das Bbox-Limit auf dem Server überschreiten.
+const CHUNK_MIN_ZOOM = 14;
+
+// Puffer in Grad (~200 m), damit Gebäude am Rand nicht schlagartig verschwinden.
+const VIEWPORT_PAD = 0.002;
+
+let _viewportDebounceTimer = null;
+// Inflight-Guard: kein zweiter /world/ensure-chunks solange einer läuft.
+let _chunkLoadInflight = false;
+
+function _addLocationMarker(loc) {
+  if (markers.has(loc.id)) return; // bereits gezeichnet
+  locData.set(loc.id, loc);
+  let m;
+  if (loc.footprint_json) {
+    try { m = L.polygon(JSON.parse(loc.footprint_json), styleFor(loc)); }
+    catch (e) { m = L.circleMarker([loc.lat, loc.lon], styleFor(loc)); }
+  } else {
+    m = L.circleMarker([loc.lat, loc.lon], styleFor(loc));
   }
-  log(`${locs.length} Orte geladen.`);
+  m.on("click", (ev) => { L.DomEvent.stopPropagation(ev); selectLocation(loc.id); });
+  m.addTo(map);
+  markers.set(loc.id, m);
+}
+
+function _removeOffscreenMarkers(bounds) {
+  // Etwas größere Bounds für Hysterese, damit Panning nicht ständig recycelt.
+  const padded = bounds.pad(0.3);
+  for (const [id, m] of markers.entries()) {
+    if (id === selectedId) continue; // ausgewählte Location nie entfernen
+    const d = locData.get(id);
+    if (!d) continue;
+    if (!padded.contains([d.lat, d.lon])) {
+      map.removeLayer(m);
+      markers.delete(id);
+    }
+  }
+}
+
+async function refreshLocationsInView() {
+  if (!map) return;
+  const zoom = map.getZoom();
+  if (zoom < VIEWPORT_MIN_ZOOM) return; // zu weit raus — kein Load
+
+  const b = map.getBounds().pad(VIEWPORT_PAD);
+  const url = `/locations?min_lat=${b.getSouth()}&min_lon=${b.getWest()}&max_lat=${b.getNorth()}&max_lon=${b.getEast()}&limit=5000`;
+  try {
+    const locs = await getJSON(url);
+    // Neue hinzufügen
+    let added = 0;
+    for (const loc of locs) {
+      if (!markers.has(loc.id)) {
+        _addLocationMarker(loc);
+        added++;
+      } else {
+        // Daten aktualisieren (z. B. discovery_status nach Tick)
+        locData.set(loc.id, loc);
+      }
+    }
+    // Off-screen entfernen
+    _removeOffscreenMarkers(map.getBounds());
+    // Selektion/Highlight wiederherstellen, falls der Marker neu gezeichnet wurde
+    if (selectedId !== null && markers.has(selectedId)) {
+      const sel = locData.get(selectedId);
+      if (sel && !highlightLayer) highlightFootprint(sel);
+    }
+    if (added > 0) log(`${locs.length} Orte im Viewport (${added} neu).`);
+  } catch (e) {
+    log("Locations-Ladefehler: " + e.message, "decision");
+  }
+}
+
+// Ruft POST /world/ensure-chunks für die aktuelle (gepufferte) Bbox auf,
+// sofern Zoom ≥ CHUNK_MIN_ZOOM und kein Request bereits läuft (Inflight-Guard).
+// Danach wird refreshLocationsInView aufgerufen, damit neue Gebäude erscheinen.
+async function ensureChunksInView() {
+  if (!map) return;
+  const zoom = map.getZoom();
+  if (zoom < CHUNK_MIN_ZOOM) return;         // zu weit raus
+  if (_chunkLoadInflight) return;             // Inflight-Guard: nur ein Request gleichzeitig
+
+  const b = map.getBounds().pad(VIEWPORT_PAD);
+  const bbox = {
+    min_lat: b.getSouth(),
+    min_lon: b.getWest(),
+    max_lat: b.getNorth(),
+    max_lon: b.getEast(),
+  };
+
+  const statusEl = document.getElementById("chunk-status");
+  _chunkLoadInflight = true;
+  if (statusEl) statusEl.classList.remove("hidden");
+
+  try {
+    const r = await postJSON("/world/ensure-chunks", bbox);
+    if (r.loaded_chunks > 0 || r.materialized > 0) {
+      // Neue Chunks oder Survivors → Locations neu laden, damit Marker erscheinen
+      await refreshLocationsInView();
+    }
+  } catch (e) {
+    // Stille Fehler (z.B. Bbox zu groß bei schnellem Herauszoomen) — kein log-Spam
+    if (!e.message.includes("Bbox zu groß")) {
+      log("Chunk-Ladefehler: " + e.message, "decision");
+    }
+  } finally {
+    _chunkLoadInflight = false;
+    if (statusEl) statusEl.classList.add("hidden");
+  }
+}
+
+function scheduleViewportRefresh() {
+  clearTimeout(_viewportDebounceTimer);
+  _viewportDebounceTimer = setTimeout(async () => {
+    // Erst Chunks nachladen (nur bei Zoom ≥ 14), dann Locations zeichnen.
+    // ensureChunksInView ruft intern refreshLocationsInView auf, wenn neue Chunks kamen.
+    // Bei Zoom < 14 (oder wenn Chunks already loaded): direkt refreshLocationsInView.
+    if (map && map.getZoom() >= CHUNK_MIN_ZOOM) {
+      await ensureChunksInView();
+      // ensureChunksInView hat refreshLocationsInView aufgerufen falls nötig.
+      // Sicherheitshalber immer neu zeichnen (idempotent — nur neue Marker werden hinzugefügt).
+      await refreshLocationsInView();
+    } else {
+      await refreshLocationsInView();
+    }
+  }, 300);
+}
+
+// Compat-Alias: startGame ruft loadLocations() auf — jetzt = refreshLocationsInView.
+async function loadLocations() {
+  await refreshLocationsInView();
 }
 
 function updateLocation(loc) {
@@ -385,9 +508,8 @@ function reportInterrupts(list) {
   for (const i of list || []) log(i.message, i.severity);
 }
 async function refreshDiscoveredMarkers() {
-  // Nach Ticks können sich Bestände/Status geändert haben (Verderb) – Status neu laden.
-  const locs = await getJSON("/locations");
-  for (const loc of locs) updateLocation(loc);
+  // Nach Ticks können sich Bestände/Status geändert haben (Verderb) – nur Viewport neu laden.
+  await refreshLocationsInView();
 }
 
 function setSpeed(s) {
@@ -476,6 +598,8 @@ function buildMap(center) {
     maxZoom: 19, attribution: "© OpenStreetMap",
   }).addTo(map);
   map.on("click", (e) => walkTo(e.latlng.lat, e.latlng.lng));
+  map.on("moveend", scheduleViewportRefresh);
+  map.on("zoomend", scheduleViewportRefresh);
   _mapReady = true;
 }
 

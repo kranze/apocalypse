@@ -1,19 +1,22 @@
 """Spielstart: aus dem Onboarding-Profil eine neue Welt aufsetzen.
 
-Geocodet die Wohnadresse (oder nimmt manuelle Koordinaten), lädt dort das
-Viertel + Straßennetz, setzt die Welt zurück und erschafft den Spieler-Charakter
-aus dem Profil (Bedarf aus Mifflin-St-Jeor). Der Spieler erwacht in seiner
-Wohnung — die wird sofort entdeckt, damit die Auto-Versorgung greifen kann.
+Geocodet die Wohnadresse (oder nimmt manuelle Koordinaten), lädt den
+Heimat-Chunk + Nachbarn (HOME_PRELOAD_RADIUS_M) und das Straßennetz für
+diesen kleinen Bereich, setzt die Welt zurück und erschafft den
+Spieler-Charakter aus dem Profil (Bedarf aus Mifflin-St-Jeor). Der Spieler
+erwacht in seiner Wohnung — die wird sofort entdeckt, damit die
+Auto-Versorgung greifen kann.
 """
 from __future__ import annotations
 
+import math
 import sqlite3
 from datetime import datetime
 from typing import Any
 
 from .. import config
-from ..osm import geocode, loader, overpass, roads
-from . import biology, chatlog, generation, survivors
+from ..osm import geocode, overpass, roads
+from . import biology, chatlog, chunks, generation, survivors
 
 INTRO = (
     "Du wachst auf. Es ist still — vollkommen still.\n"
@@ -46,43 +49,81 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
             return {"ok": False, "reason": "geocode_failed"}
         lat, lon = coords
 
-    # 2) OSM-Daten ZUERST holen (Netz) — Fail-Early, bevor der Spielstand
-    #    angefasst wird. So zerstört ein Netzfehler keine bestehende Welt.
-    road_radius = config.RADIUS_M + 200
+    # 2) Vorlade-Bbox für Heimat-Chunk + Nachbarn berechnen.
+    #    Grad-Umrechnung: N-S ist konstant, O-W skaliert mit cos(lat).
+    preload_m = config.HOME_PRELOAD_RADIUS_M
+    lat_deg = preload_m / 111_320.0
+    lon_deg = preload_m / (111_320.0 * math.cos(math.radians(lat)))
+    preload_bbox = (
+        lat - lat_deg,  # min_lat
+        lon - lon_deg,  # min_lon
+        lat + lat_deg,  # max_lat
+        lon + lon_deg,  # max_lon
+    )
+
+    # 3) Fail-Early: OSM-Daten zuerst holen, BEVOR der Spielstand angefasst wird.
+    #    Strategie: Straßennetz (fetch_roads) als Netz-Probe nutzen; danach
+    #    chunks.ensure_chunks_in_bbox wird nach dem Reset aufgerufen — da
+    #    loader.load_bbox intern cached, wirft ein erneuter Fehler keinen Reset.
+    #    Gebäude: ensure_chunks_in_bbox kann intern fehlschlagen; wir starten
+    #    einen Probe-Fetch des Heimat-Chunks (lädt ggf. cache-miss via Overpass)
+    #    BEVOR wir resetten, damit ein Netzfehler die Welt nicht zerstört.
+    road_radius = preload_m + 200
     try:
-        overpass.fetch(lat, lon, config.RADIUS_M)
+        # Straßen-Fetch (nutzt fetch_query / Disk-Cache).
         roads.fetch_roads(lat, lon, road_radius)
+        # Heimat-Chunk-Probe: overpass.fetch_bbox cached auf Disk und macht
+        # keinen DB-Zugriff. Dieser Aufruf befüllt den Disk-Cache des Heimat-
+        # Chunks, sodass der Post-Reset-Aufruf (chunks.ensure_chunks_in_bbox)
+        # ihn ohne Netz-Request aus dem Cache nimmt. Ein Netzfehler hier bricht
+        # ab BEVOR der Spielstand angefasst wird — Fail-Early garantiert.
+        cx, cy = chunks.chunk_key(lat, lon)
+        home_bbox = chunks.chunk_bbox(cx, cy)
+        overpass.fetch_bbox(*home_bbox)
     except Exception:
         return {"ok": False, "reason": "osm_unavailable"}
 
-    # 3) Spielstand zurücksetzen (frische Welt am neuen Ort).
+    # 4) Spielstand zurücksetzen (frische Welt am neuen Ort).
     for stmt in (
         "DELETE FROM location_inventory;", "DELETE FROM group_inventory;",
         "DELETE FROM resource_ledger;", "DELETE FROM events;",
         "DELETE FROM resource_audit;", "DELETE FROM capabilities;",
         "DELETE FROM locations;", "DELETE FROM survivors;",
+        "DELETE FROM world_chunks;",
         "UPDATE world SET tick = 0 WHERE id = 1;",
     ):
         conn.execute(stmt)
     conn.commit()
 
-    # 4) Viertel + Straßennetz laden (jetzt aus dem Cache, kein Netz mehr nötig).
-    loader.load_area(lat, lon)
+    # 5) Heimat-Chunk + Nachbarn laden (idempotent; Heimat-Chunk ist bereits
+    #    im overpass-Cache aus dem Probe-Fetch oben → kein Netzaufruf mehr).
+    #    Fehler bei Nachbar-Chunks sind tolerierbar; kritisch ist nur der Heimat-Chunk.
+    chunks.ensure_chunks_in_bbox(conn, *preload_bbox)
+
+    # Heimat-Chunk-Check: mindestens der eigene Chunk muss geladen sein.
+    home_cx, home_cy = chunks.chunk_key(lat, lon)
+    home_chunk_row = conn.execute(
+        "SELECT status FROM world_chunks WHERE cx = ? AND cy = ?;",
+        (home_cx, home_cy),
+    ).fetchone()
+    if home_chunk_row is None or home_chunk_row["status"] != "loaded":
+        return {"ok": False, "reason": "osm_unavailable"}
+
+    # 6) Straßennetz für den Vorlade-Bereich aufbauen (aus dem Cache).
     roads.get_graph(lat, lon, radius_m=road_radius, force=True)
 
-    # 4a) Globale Überlebenden-Verteilung einmalig aufsetzen (seed muss stehen).
-    #     Dann die im geladenen Viertel liegenden lazy materialisieren.
+    # 7) Globale Überlebenden-Verteilung einmalig aufsetzen (seed muss stehen).
+    #    Dann die im Vorlade-Bereich liegenden lazy materialisieren.
     survivors.spawn_survivors(conn)
-    radius_deg = config.RADIUS_M / 111_320.0
     survivors.materialize_in_bbox(
         conn,
-        min_lat=lat - radius_deg,
-        min_lon=lon - radius_deg,
-        max_lat=lat + radius_deg,
-        max_lon=lon + radius_deg,
+        min_lat=preload_bbox[0],
+        min_lon=preload_bbox[1],
+        max_lat=preload_bbox[2],
+        max_lon=preload_bbox[3],
     )
 
-    # 4) Spieler aus Profil erschaffen (id 1).
+    # 8) Spieler aus Profil erschaffen (id 1).
     start_dt = conn.execute("SELECT start_datetime FROM world WHERE id=1;").fetchone()["start_datetime"]
     age = _age_from(profile.get("birthdate"), start_dt)
     weight = profile.get("weight_kg") or 75.0
@@ -103,12 +144,12 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
     )
     conn.commit()
 
-    # 4b) Chat-Log zurücksetzen und Intro als erste Narrator-Zeile schreiben.
+    # 9) Chat-Log zurücksetzen und Intro als erste Narrator-Zeile schreiben.
     chatlog.clear(conn, 1)
     chatlog.append(conn, 1, "narrator", INTRO)
     conn.commit()
 
-    # 5) Zuhause (nächstgelegenes Gebäude) entdecken -> Vorrat verfügbar.
+    # 10) Zuhause (nächstgelegenes Gebäude) entdecken -> Vorrat verfügbar.
     home = conn.execute(
         "SELECT id, (ABS(lat-?)+ABS(lon-?)) AS d FROM locations ORDER BY d LIMIT 1;",
         (lat, lon),

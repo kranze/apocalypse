@@ -4,11 +4,16 @@ Eine einmalige Live-Abfrage pro (lat, lon, radius, QUERY_VERSION) wird als
 Roh-JSON nach ``data/osm_cache/`` geschrieben; danach immer aus dem Cache
 gelesen. Das hält Re-Läufe reproduzierbar und schont den öffentlichen
 Overpass-Server.
+
+Throttle: aufeinanderfolgende echte Netz-Requests werden auf mindestens
+``config.OVERPASS_MIN_INTERVAL_S`` gedrosselt. Cache-Hits gehen sofort
+durch (kein sleep).
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +34,9 @@ _MIRRORS = (
     "https://lz4.overpass-api.de/api/interpreter",
     "https://z.overpass-api.de/api/interpreter",
 )
+
+# Throttle-State: Zeitstempel des letzten echten Netz-Requests (Modul-Global).
+_last_net_request_ts: float = 0.0
 
 
 def _endpoints() -> list[str]:
@@ -53,6 +61,26 @@ out geom;
 """.strip()
 
 
+def build_bbox_query(
+    min_lat: float, min_lon: float, max_lat: float, max_lon: float
+) -> str:
+    """Overpass-QL: Gebäude + relevante POI-Nodes in einer Bounding-Box.
+
+    Bbox-Filter ist effizienter als ``around:`` für kachelbasierte Abfragen,
+    weil der Overpass-Server intern direkt den Spatial-Index nutzt.
+    """
+    bbox = f"{min_lat:.6f},{min_lon:.6f},{max_lat:.6f},{max_lon:.6f}"
+    return f"""
+[out:json][timeout:{config.OVERPASS_TIMEOUT_S}];
+(
+  way["building"]({bbox});
+  node["shop"]({bbox});
+  node["amenity"~"fuel|pharmacy|hospital|doctors"]({bbox});
+);
+out geom;
+""".strip()
+
+
 def _cache_key(lat: float, lon: float, radius_m: int, tag: str = "") -> str:
     raw = f"{QUERY_VERSION}|{lat:.6f}|{lon:.6f}|{radius_m}"
     if tag:
@@ -60,26 +88,45 @@ def _cache_key(lat: float, lon: float, radius_m: int, tag: str = "") -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _bbox_cache_key(
+    min_lat: float, min_lon: float, max_lat: float, max_lon: float
+) -> str:
+    """Stabiler Cache-Key für eine Bbox-Abfrage (je Chunk eindeutig).
+
+    Format: ``bbox_v{VERSION}_{min_lat:.6f}_{min_lon:.6f}_{max_lat:.6f}_{max_lon:.6f}``.
+    Das stellt sicher, dass Chunk-Grenzen immer dieselbe Cache-Datei treffen.
+    """
+    raw = (
+        f"bbox|{QUERY_VERSION}"
+        f"|{min_lat:.6f}|{min_lon:.6f}|{max_lat:.6f}|{max_lon:.6f}"
+    )
+    return "bbox_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
 def _cache_file(lat: float, lon: float, radius_m: int, tag: str = "") -> Path:
     return config.OSM_CACHE_DIR / f"{_cache_key(lat, lon, radius_m, tag)}.json"
 
 
-def fetch_query(
-    query: str,
-    lat: float,
-    lon: float,
-    radius_m: int,
-    *,
-    tag: str = "",
-    force: bool = False,
-) -> dict[str, Any]:
-    """Führt eine beliebige Overpass-Query aus und cached sie unter
-    (coords, radius, tag). ``tag`` trennt verschiedene Query-Arten im Cache
-    (z.B. POIs vs. Straßen)."""
-    cache_file = _cache_file(lat, lon, radius_m, tag)
-    if cache_file.exists() and not force:
-        return json.loads(cache_file.read_text(encoding="utf-8"))
+def _bbox_cache_file(
+    min_lat: float, min_lon: float, max_lat: float, max_lon: float
+) -> Path:
+    return config.OSM_CACHE_DIR / f"{_bbox_cache_key(min_lat, min_lon, max_lat, max_lon)}.json"
 
+
+def _throttle() -> None:
+    """Wartet, bis seit dem letzten Netz-Request mind. OVERPASS_MIN_INTERVAL_S
+    vergangen sind. Wird NUR vor echten Fetches aufgerufen; Cache-Hits nicht."""
+    global _last_net_request_ts
+    elapsed = time.monotonic() - _last_net_request_ts
+    wait = config.OVERPASS_MIN_INTERVAL_S - elapsed
+    if wait > 0:
+        time.sleep(wait)
+    _last_net_request_ts = time.monotonic()
+
+
+def _do_net_fetch(query: str, cache_file: Path) -> dict[str, Any]:
+    """Führt einen throttled Netz-Request mit Mirror-Fallback aus und cached."""
+    _throttle()
     last_err: Exception | None = None
     for url in _endpoints():
         try:
@@ -99,6 +146,44 @@ def fetch_query(
     raise last_err if last_err else RuntimeError("Overpass: kein Endpoint erreichbar")
 
 
+def fetch_query(
+    query: str,
+    lat: float,
+    lon: float,
+    radius_m: int,
+    *,
+    tag: str = "",
+    force: bool = False,
+) -> dict[str, Any]:
+    """Führt eine beliebige Overpass-Query aus und cached sie unter
+    (coords, radius, tag). ``tag`` trennt verschiedene Query-Arten im Cache
+    (z.B. POIs vs. Straßen)."""
+    cache_file = _cache_file(lat, lon, radius_m, tag)
+    if cache_file.exists() and not force:
+        return json.loads(cache_file.read_text(encoding="utf-8"))
+    return _do_net_fetch(query, cache_file)
+
+
 def fetch(lat: float, lon: float, radius_m: int, *, force: bool = False) -> dict[str, Any]:
     """Liefert die POI/Gebäude-Overpass-Antwort als dict (Disk-Cache, tag=\"\")."""
     return fetch_query(build_query(lat, lon, radius_m), lat, lon, radius_m, force=force)
+
+
+def fetch_bbox(
+    min_lat: float,
+    min_lon: float,
+    max_lat: float,
+    max_lon: float,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Liefert POI/Gebäude-Overpass-Antwort für eine Bbox (Disk-Cache je Chunk).
+
+    Cache-Hit ist sofort (kein Throttle). Echter Netz-Request wird gedrosselt
+    (mind. OVERPASS_MIN_INTERVAL_S seit dem letzten echten Request).
+    """
+    cache_file = _bbox_cache_file(min_lat, min_lon, max_lat, max_lon)
+    if cache_file.exists() and not force:
+        return json.loads(cache_file.read_text(encoding="utf-8"))
+    query = build_bbox_query(min_lat, min_lon, max_lat, max_lon)
+    return _do_net_fetch(query, cache_file)

@@ -196,3 +196,18 @@ button:disabled { opacity: .4; cursor: default; }
 .sheet button:hover { filter: brightness(1.08); }
 .err { margin-top: 12px; color: var(--crit); font-size: 13px; }
 #intro-text { white-space: pre-wrap; font-size: 15px; line-height: 1.6; color: var(--text); font-family: inherit; margin: 0; }
+
+/* Chunk-Lade-Hinweis (oben links über der Karte, unterhalb des Leaflet-Zoombuttons) */
+.chunk-status {
+  position: absolute;
+  top: 80px;
+  left: 10px;
+  z-index: 1000;
+  background: rgba(20, 23, 28, 0.85);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  pointer-events: none;
+}

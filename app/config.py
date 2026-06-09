@@ -48,6 +48,19 @@ CENTER_LAT: float = float(_env("CENTER_LAT", "49.5897"))
 CENTER_LON: float = float(_env("CENTER_LON", "11.0120"))
 RADIUS_M: int = int(_env("RADIUS_M", "400"))
 
+# --- Chunk-System -------------------------------------------------------
+# Seitenlänge einer Kachel in Grad (≈ 1,1 km N-S / ~0,7 km O-W bei 50°N).
+# Überschreibbar mit WASTELAND_CHUNK_DEG.
+CHUNK_DEG: float = float(_env("CHUNK_DEG", "0.01"))
+
+# Vorlade-Radius um den Spieler-Startpunkt beim Game-Start (Meter).
+# Überschreibbar mit WASTELAND_HOME_PRELOAD_RADIUS_M.
+HOME_PRELOAD_RADIUS_M: int = int(_env("HOME_PRELOAD_RADIUS_M", "600"))
+
 # --- Overpass -----------------------------------------------------------
 OVERPASS_URL: str = _env("OVERPASS_URL", "https://overpass-api.de/api/interpreter")
 OVERPASS_TIMEOUT_S: int = int(_env("OVERPASS_TIMEOUT_S", "90"))
+
+# Mindest-Wartezeit zwischen aufeinanderfolgenden echten Netz-Requests (Sek.).
+# Cache-Hits zählen nicht. Überschreibbar mit WASTELAND_OVERPASS_MIN_INTERVAL_S.
+OVERPASS_MIN_INTERVAL_S: float = float(_env("OVERPASS_MIN_INTERVAL_S", "1.0"))

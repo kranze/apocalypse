@@ -45,6 +45,40 @@ ON CONFLICT(osm_id) DO UPDATE SET
 """
 
 
+def _upsert_records(
+    conn: sqlite3.Connection, records: list[dict[str, Any]], world_seed: int
+) -> int:
+    """Upserted eine Liste von Location-Records in die DB; gibt Anzahl zurück."""
+    for rec in records:
+        rec = {**rec, "generation_seed": _generation_seed(world_seed, rec["osm_id"])}
+        conn.execute(_UPSERT, rec)
+    return len(records)
+
+
+def load_bbox(
+    min_lat: float,
+    min_lon: float,
+    max_lat: float,
+    max_lon: float,
+    conn: sqlite3.Connection,
+    *,
+    force_refresh: bool = False,
+) -> int:
+    """Lädt alle Locations in einer Bbox, upsertet sie in die DB.
+
+    Nutzt overpass.fetch_bbox (Disk-Cache, Throttle) + die vorhandene Upsert-
+    Logik. Rand-Overlap zwischen benachbarten Chunks wird durch den Upsert auf
+    ``osm_id`` dedupliziert — kein Doppeleintrag möglich.
+
+    Gibt die Anzahl der geupserteten (neuen + aktualisierten) Locations zurück.
+    Die Connection muss vom Aufrufer verwaltet werden (commit/rollback).
+    """
+    data = overpass.fetch_bbox(min_lat, min_lon, max_lat, max_lon, force=force_refresh)
+    records = parser.parse(data)
+    world_seed = db.get_world_seed(conn)
+    return _upsert_records(conn, records, world_seed)
+
+
 def load_area(
     lat: float | None = None,
     lon: float | None = None,
@@ -68,9 +102,7 @@ def load_area(
     conn = db.get_connection()
     try:
         world_seed = db.get_world_seed(conn)
-        for rec in records:
-            rec = {**rec, "generation_seed": _generation_seed(world_seed, rec["osm_id"])}
-            conn.execute(_UPSERT, rec)
+        _upsert_records(conn, records, world_seed)
         conn.commit()
         by_type = _count_by_type(conn)
     finally:

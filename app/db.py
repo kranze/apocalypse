@@ -65,6 +65,13 @@ _MIGRATIONS = (
     " id INTEGER PRIMARY KEY, character_id INTEGER NOT NULL"
     " REFERENCES characters(id) ON DELETE CASCADE, turn INTEGER NOT NULL,"
     " role TEXT NOT NULL, text TEXT NOT NULL, created_tick INTEGER);",
+    "CREATE TABLE IF NOT EXISTS world_chunks ("
+    " cx INTEGER NOT NULL,"
+    " cy INTEGER NOT NULL,"
+    " status TEXT NOT NULL DEFAULT 'pending',"
+    " loaded_at_tick INTEGER,"
+    " building_count INTEGER,"
+    " PRIMARY KEY (cx, cy));",
 )
 
 # (tabelle, spalte, DDL-Definition) — nur angelegt, wenn die Spalte fehlt.

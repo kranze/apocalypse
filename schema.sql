@@ -279,6 +279,20 @@ CREATE TABLE survivor_groups (
 );
 
 -- ---------------------------------------------------------------------------
+-- WELT-KACHELN (Chunk-System für lazy OSM-Laden; nur Sim-Kern schreibt)
+-- Kachel-Koordinaten (cx, cy) = floor(lat/CHUNK_DEG), floor(lon/CHUNK_DEG).
+-- status: 'loaded' sobald Overpass-Daten für diese Kachel importiert wurden.
+-- ---------------------------------------------------------------------------
+CREATE TABLE world_chunks (
+    cx              INTEGER NOT NULL,
+    cy              INTEGER NOT NULL,
+    status          TEXT    NOT NULL DEFAULT 'pending', -- pending|loaded
+    loaded_at_tick  INTEGER,                -- Tick, bei dem die Kachel geladen wurde
+    building_count  INTEGER,                -- Anzahl Locations nach dem Import
+    PRIMARY KEY (cx, cy)
+);
+
+-- ---------------------------------------------------------------------------
 -- CHAT LOG (Adjudikator-Gedächtnis; nur Sim-Kern schreibt, DESIGN.md §8)
 -- Persistente Gesprächs-Historie pro Character für LLM-Kontext.
 -- ---------------------------------------------------------------------------
