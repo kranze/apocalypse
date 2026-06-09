@@ -89,8 +89,9 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
         "DELETE FROM resource_ledger;", "DELETE FROM events;",
         "DELETE FROM resource_audit;", "DELETE FROM capabilities;",
         "DELETE FROM locations;", "DELETE FROM survivors;",
+        "DELETE FROM survivor_groups;",
         "DELETE FROM world_chunks;",
-        "UPDATE world SET tick = 0 WHERE id = 1;",
+        "UPDATE world SET tick = 0, survivor_sim_day = 0 WHERE id = 1;",
     ):
         conn.execute(stmt)
     conn.commit()
