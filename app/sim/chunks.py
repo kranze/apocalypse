@@ -20,6 +20,7 @@ from typing import Any
 
 from .. import config
 from ..osm import loader, roads
+from . import survivors as _survivors
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +143,14 @@ def ensure_chunk_loaded(
     except Exception:
         pass  # Straßen-Fehler ist nicht kritisch für den Location-Load
 
+    # Survivors in diesem Chunk lazy materialisieren (Reihenfolge: erst
+    # Locations geladen → Wohnhaus-Kandidaten vorhanden; dann Snap).
+    # Idempotent durch materialized=0-Filter; Fehler darf Chunk-Load nicht crashen.
+    try:
+        _survivors.materialize_in_bbox(conn, *chunk_bbox(cx, cy))
+    except Exception:
+        pass  # Materialisierungsfehler ist nicht kritisch
+
     # Aktuellen Tick aus der Welt-Tabelle lesen (NULL-sicher).
     tick_row = conn.execute("SELECT tick FROM world WHERE id = 1;").fetchone()
     current_tick = int(tick_row["tick"]) if tick_row is not None else 0
@@ -244,6 +253,13 @@ def ensure_bbox_bulk(
         [(cx, cy, current_tick) for cx, cy in cells],
     )
     conn.commit()
+
+    # Survivors für die gesamte Bbox einmal lazy materialisieren (idempotent;
+    # Locations sind jetzt vorhanden → Wohnhaus-Snap hat Kandidaten).
+    try:
+        _survivors.materialize_in_bbox(conn, min_lat, min_lon, max_lat, max_lon)
+    except Exception:
+        pass  # Materialisierungsfehler ist nicht kritisch
 
     return {
         "loaded_chunks": len(cells),

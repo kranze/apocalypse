@@ -46,14 +46,19 @@ WORLD_SEED: int = int(_env("WORLD_SEED", "1337"))
 # überschreiben, z.B. WASTELAND_CENTER_LAT / WASTELAND_CENTER_LON / WASTELAND_RADIUS_M.
 CENTER_LAT: float = float(_env("CENTER_LAT", "49.5897"))
 CENTER_LON: float = float(_env("CENTER_LON", "11.0120"))
+# Vorlade-Radius (Meter): bestimmt, wie groß das beim Game-Start vorgeladene
+# Gebiet um den Spieler-Startpunkt ist. Nicht mehr Welt-Grenze — die Welt
+# wächst durch das Chunk-System dynamisch. Überschreibbar mit WASTELAND_RADIUS_M.
 RADIUS_M: int = int(_env("RADIUS_M", "400"))
 
 # --- Chunk-System -------------------------------------------------------
 # Seitenlänge einer Kachel in Grad (≈ 1,1 km N-S / ~0,7 km O-W bei 50°N).
+# Kleinere Werte = feingranulareres Streaming, mehr DB-Einträge.
 # Überschreibbar mit WASTELAND_CHUNK_DEG.
 CHUNK_DEG: float = float(_env("CHUNK_DEG", "0.01"))
 
 # Vorlade-Radius um den Spieler-Startpunkt beim Game-Start (Meter).
+# Bestimmt, wie viele Chunks beim neuen Spiel sofort geladen werden (home area).
 # Überschreibbar mit WASTELAND_HOME_PRELOAD_RADIUS_M.
 HOME_PRELOAD_RADIUS_M: int = int(_env("HOME_PRELOAD_RADIUS_M", "600"))
 

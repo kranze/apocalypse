@@ -95,8 +95,14 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
         conn.execute(stmt)
     conn.commit()
 
-    # 5) Heimat-Chunk + Nachbarn laden (idempotent; Heimat-Chunk ist bereits
+    # 5) Globale Überlebenden-Verteilung aufsetzen (muss VOR dem Chunk-Load
+    #    stehen, damit ensure_bbox_bulk direkt materialisieren kann).
+    survivors.spawn_survivors(conn)
+
+    # 6) Heimat-Chunk + Nachbarn laden (idempotent; Heimat-Chunk ist bereits
     #    im overpass-Cache aus dem Probe-Fetch oben → kein Netzaufruf mehr).
+    #    ensure_bbox_bulk materialisiert die Survivors der Preload-Bbox direkt
+    #    mit (Locations vorhanden → Wohnhaus-Snap funktioniert).
     #    Fehler bei Nachbar-Chunks sind tolerierbar; kritisch ist nur der Heimat-Chunk.
     chunks.ensure_bbox_bulk(conn, *preload_bbox)
 
@@ -109,19 +115,8 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
     if home_chunk_row is None or home_chunk_row["status"] != "loaded":
         return {"ok": False, "reason": "osm_unavailable"}
 
-    # 6) Straßennetz für den Vorlade-Bereich aufbauen (aus dem Cache).
+    # 7) Straßennetz für den Vorlade-Bereich aufbauen (aus dem Cache).
     roads.get_graph(lat, lon, radius_m=road_radius, force=True)
-
-    # 7) Globale Überlebenden-Verteilung einmalig aufsetzen (seed muss stehen).
-    #    Dann die im Vorlade-Bereich liegenden lazy materialisieren.
-    survivors.spawn_survivors(conn)
-    survivors.materialize_in_bbox(
-        conn,
-        min_lat=preload_bbox[0],
-        min_lon=preload_bbox[1],
-        max_lat=preload_bbox[2],
-        max_lon=preload_bbox[3],
-    )
 
     # 8) Spieler aus Profil erschaffen (id 1).
     start_dt = conn.execute("SELECT start_datetime FROM world WHERE id=1;").fetchone()["start_datetime"]

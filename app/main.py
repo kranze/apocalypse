@@ -769,6 +769,8 @@ def api_info() -> dict:
         "tick_minutes": constants.TICK_MINUTES,
         "center": [config.CENTER_LAT, config.CENTER_LON],
         "radius_m": config.RADIUS_M,
+        "chunk_deg": config.CHUNK_DEG,
+        "home_preload_radius_m": config.HOME_PRELOAD_RADIUS_M,
         "llm_backend": get_backend().name,  # "stub" oder "claude"
     }
 
