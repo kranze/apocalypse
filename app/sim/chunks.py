@@ -19,7 +19,7 @@ import sqlite3
 from typing import Any
 
 from .. import config
-from ..osm import loader
+from ..osm import loader, roads
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +135,12 @@ def ensure_chunk_loaded(
             "building_count": 0,
             "reason": str(exc),
         }
+
+    # Straßen für diesen Chunk laden (additiver Graph; Fehler darf nicht crashen).
+    try:
+        roads.ensure_roads_for_chunk(cx, cy)
+    except Exception:
+        pass  # Straßen-Fehler ist nicht kritisch für den Location-Load
 
     # Aktuellen Tick aus der Welt-Tabelle lesen (NULL-sicher).
     tick_row = conn.execute("SELECT tick FROM world WHERE id = 1;").fetchone()

@@ -11,9 +11,47 @@ import json
 import sqlite3
 from typing import Any
 
+import math
+
 from ..osm import roads
+from .. import config
 from . import constants
 from .events import emit_event
+
+
+def _ensure_corridor_roads(
+    start_lat: float, start_lon: float,
+    goal_lat: float, goal_lon: float,
+    cap: int = 8,
+) -> None:
+    """Lädt Korridor-Chunks entlang der Luftlinie Start→Ziel in den additiven Graph.
+
+    Wählt gleichmäßig verteilte Punkte entlang der Linie (max ``cap`` Chunks)
+    und ruft ``ensure_roads_for_chunk`` für jeden auf. Fehler werden ignoriert.
+    """
+    try:
+        # Chunk-Koordinaten für Start und Ziel
+        cx_start = math.floor(start_lat / config.CHUNK_DEG)
+        cy_start = math.floor(start_lon / config.CHUNK_DEG)
+        cx_goal = math.floor(goal_lat / config.CHUNK_DEG)
+        cy_goal = math.floor(goal_lon / config.CHUNK_DEG)
+
+        # Anzahl Schritte begrenzen
+        steps = max(abs(cx_goal - cx_start), abs(cy_goal - cy_start), 1)
+        steps = min(steps, cap - 1)  # max cap Chunks
+
+        seen: set[tuple[int, int]] = set()
+        for i in range(steps + 1):
+            t = i / steps if steps > 0 else 0.0
+            lat_i = start_lat + (goal_lat - start_lat) * t
+            lon_i = start_lon + (goal_lon - start_lon) * t
+            cx = math.floor(lat_i / config.CHUNK_DEG)
+            cy = math.floor(lon_i / config.CHUNK_DEG)
+            if (cx, cy) not in seen:
+                seen.add((cx, cy))
+                roads.ensure_roads_for_chunk(cx, cy)
+    except Exception:
+        pass  # Korridor-Load-Fehler ist nicht kritisch
 
 
 def carried_weight(conn: sqlite3.Connection, group_id: int) -> float:
@@ -43,7 +81,13 @@ def set_destination(
         if char["lat"] is None or char["lon"] is None:
             return {"ok": False, "reason": "no_position"}
 
-        # Graph an das Zuhause des Spielers binden (nicht ans Config-Zentrum).
+        # Korridor-Chunks entlang der Luftlinie Start→Ziel vorladen (begrenzt auf cap=8).
+        # Fehler werden ignoriert (Fallback auf Luftlinie bleibt).
+        _ensure_corridor_roads(
+            char["lat"], char["lon"], lat, lon, cap=8
+        )
+
+        # Graph: anchor_lat/lon des Spielers (rückwärtskompatibel, monkeypatching in Tests).
         anchor_lat = char["home_lat"] if char["home_lat"] is not None else char["lat"]
         anchor_lon = char["home_lon"] if char["home_lon"] is not None else char["lon"]
         graph = roads.get_graph(anchor_lat, anchor_lon)
