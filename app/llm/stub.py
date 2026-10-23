@@ -31,9 +31,13 @@ _RULES: list[tuple[str, tuple[str, ...]]] = [
     ("establish_capability", ("ssid", "beacon", "funksignal", "signal senden",
                               "sende ein", "antenne", "funkmast", "über den mast",
                               "ueber den mast", "leuchtturm")),
+    ("charge_device", ("aufladen", "auflade", "akku", "lade mein", "lade das", "lade den",
+                       "lade dein", "lade ihn", "lade es", "handy laden", "telefon laden",
+                       "smartphone laden", "laptop laden", "powerbank")),
     ("search", ("such", "finde", "durchsuch", "schau nach", "gibt es hier", "kram", "stöber", "stoeber")),
     ("prepare", ("koch", "zubereit", "brat", "gar ", "gare")),
     ("consume_food", ("iss", "essen", "ess ", "futter", "mampf", "verzehr")),
+    ("drink", ("trink", "wasserhahn", "hahn", "leitungswasser", "durst")),
     ("transfer", ("plünder", "pluender", "nimm", "raff", "räum", "loot", "einsammeln")),
     ("discover", ("betr", "geh rein", "geh in", "hinein", "rein", "öffne", "oeffne",
                   "erkund", "untersuch")),
@@ -117,6 +121,11 @@ class RuleBackend(LLMBackend):
                             narration="Du lässt etwas Zeit verstreichen.")
         if match == "consume_food":
             return proposal(effects=[{"op": "consume_food"}], narration="Du isst etwas.")
+        if match == "charge_device":
+            return proposal(effects=[{"op": "charge_device"}],
+                            narration="Du lädst deine Geräte.")
+        if match == "drink":
+            return proposal(effects=[{"op": "drink"}], narration="Du trinkst etwas Wasser.")
         if match == "prepare":
             return proposal(effects=[{"op": "prepare"}], narration="Du bereitest etwas zu.")
         if match == "fill_water":

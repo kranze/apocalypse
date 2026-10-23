@@ -726,14 +726,10 @@ def _do_charge(conn, cid, action) -> dict[str, Any]:
     if not devices.sync(conn, gid):
         return _reject(conn, "charge", cid, "no_device", _ONLINE_HINTS["no_device"])
     here = _location_here(conn, cid, constants.LOOT_REACH_M)
-    source = action.get("source")
-    plan = None
-    if source in (None, "grid"):
-        plan = devices.grid_charge_plan(conn, gid, here["id"] if here else None)
-    if plan is None and source in (None, "powerbank"):
-        plan = devices.powerbank_charge_plan(conn, gid)
+    plan = devices.charge_plan(
+        conn, gid, here["id"] if here else None, action.get("source"))
     if plan is None:
-        if all(v["units"] - v["charge"] <= 0.02 for v in devices.sync(conn, gid).values()):
+        if devices.charge_block_reason(conn, gid) == "already_full":
             return _reject(conn, "charge", cid, "already_full", "Alle Geräte sind schon voll.")
         return _reject(conn, "charge", cid, "no_power",
                        "Hier gibt es keinen Strom, und keine Powerbank hilft dir.")

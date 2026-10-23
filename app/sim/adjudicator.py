@@ -21,7 +21,7 @@ from typing import Any
 
 from ..llm import get_backend
 from ..llm.base import single_shot_adjudication
-from . import capabilities, chatlog, effects, generation, kb, requirements
+from . import capabilities, chatlog, devices, effects, generation, kb, requirements
 from .toolbox import AdjudicationToolbox, hint_for
 
 # --- Tunables des Adjudikators (gehören bewusst nicht in constants.py) ---
@@ -100,6 +100,8 @@ def build_context(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]
         "providers": providers,
         "history": chatlog.recent(conn, character_id, 16),
         "world_state": _world_state(conn),
+        "devices": devices.status(conn, group_id),
+        "network": devices.network_quality(conn, effects._power_loc(conn, {"player": char})),
     }
 
 

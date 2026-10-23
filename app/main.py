@@ -73,6 +73,8 @@ class ActionRequest(BaseModel):
     text: str | None = None
     override_text: str | None = None
     override_reason: str | None = None
+    package_id: str | None = None   # download
+    source: str | None = None       # charge: "grid" | "powerbank"
 
 
 class MoveRequest(BaseModel):

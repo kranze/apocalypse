@@ -4,7 +4,7 @@ Reine Daten + Argument-Normalisierung, keine DB. Das Modell bekommt
 
 * **Lese-Werkzeuge** (``READ_TOOLS``): Orte in der Nähe, eigenes Inventar,
   Inhalt eines bereits durchsuchten Ortes, KB-Abfrage, aktive Capabilities,
-  Anforderungs-Lieferanten, Weltzustand,
+  Anforderungs-Lieferanten, Gerätestatus, Weltzustand,
 * **Vorschlags-Werkzeuge** (``propose_<op>`` je Effekt aus ``EFFECT_OPS``) und
 * ``finish`` (beendet die Schleife mit Verständnis, Machbarkeit, Narration).
 
@@ -64,6 +64,11 @@ READ_TOOLS: dict[str, dict[str, Any]] = {
                        "requirement=null: alle bekannten Anforderungen.",
         "input_schema": _obj({"requirement": _NS}),
     },
+    "get_device_status": {
+        "description": "Akkustand der Geräte (Smartphone/Laptop/Powerbank) und "
+                       "Netzqualität am Standort (Mobilfunk/WLAN/Internet).",
+        "input_schema": _obj({}),
+    },
     "get_world_state": {
         "description": "Tag, Uhrzeit und Infrastruktur-Lage (soweit bekannt).",
         "input_schema": _obj({}),
@@ -99,6 +104,11 @@ _PROPOSE_SPECS: dict[str, tuple[str, dict[str, Any]]] = {
                    "liters=null: so viel wie sinnvoll.", _obj({"liters": _NN})),
     "barricade": ("Den Ort, an dem man steht, verbarrikadieren (braucht Material "
                   "laut KB-Rezept).", _obj({"target": _NS})),
+    "charge_device": ("Smartphone/Laptop laden (Stromnetz nur bei Strom am Ort, "
+                      "sonst Powerbank). source: 'grid', 'powerbank' oder null = "
+                      "was gerade geht.", _obj({"source": _NS})),
+    "drink": ("Einen Liter Wasser trinken (Inventar, sonst Leitungswasser — nur "
+              "solange am Ort Wasserdruck herrscht).", _obj({})),
     "leave_note": ("Eine kurze Nachricht/einen Zettel am aktuellen Ort hinterlassen.",
                    _obj({"text": _S})),
 }

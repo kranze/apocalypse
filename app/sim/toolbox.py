@@ -24,7 +24,7 @@ from typing import Any
 
 from ..llm import tools as llm_tools
 from ..llm.base import FEASIBILITY
-from . import capabilities, effects, generation, kb, requirements
+from . import capabilities, devices, effects, generation, kb, requirements
 
 # Obergrenze der Werkzeugaufrufe je erlaubter Modell-Runde (Schutz gegen
 # Endlos-Aufrufe innerhalb einer Runde, z.B. extrem viele Parallel-Calls).
@@ -35,6 +35,9 @@ def hint_for(reason: str | None) -> str | None:
     """Kurzer Spieler-Hinweis zu einem Ablehnungsgrund."""
     if not reason:
         return None
+    if reason == "missing:power":
+        return ("Kein Strom: das Netz ist hier ausgefallen, und du hast keinen "
+                "Generator.")
     if reason.startswith("missing:"):
         return f"Dir fehlt: {reason.split(':', 1)[1]}."
     return {
@@ -42,6 +45,11 @@ def hint_for(reason: str | None) -> str | None:
         "no_food": "Nichts direkt Essbares dabei.",
         "no_water": "Nicht genug Wasser.",
         "no_heat": "Keine Hitzequelle.",
+        "no_power": "Hier gibt es keinen Strom, und keine Powerbank hilft dir.",
+        "no_tap_water": "Aus dem Hahn kommt kein Wasser mehr (kein Wasserdruck) — "
+                        "du brauchst Wasser aus Vorräten oder Funden.",
+        "no_device": "Du hast kein Gerät (Smartphone, Laptop) zum Laden.",
+        "already_full": "Alle Geräte sind schon voll.",
         "no_recipe": "So etwas kannst du (noch) nicht aufbauen.",
         "nothing_to_prepare": "Nichts zuzubereiten.",
         "nothing_to_take": "Da liegt nichts (mehr), was du nehmen könntest.",
@@ -211,6 +219,12 @@ class AdjudicationToolbox:
                     owned_fn=lambda i: self.staged.owned(self.conn, self._gid(), i))),
             }
         return {"requirements": out}
+
+    def _r_get_device_status(self, args) -> dict[str, Any]:
+        gid = self._gid()
+        loc_id = effects._power_loc(self.conn, self.context)
+        return {"devices": devices.status(self.conn, gid),
+                "network": devices.network_quality(self.conn, loc_id)}
 
     def _r_get_world_state(self, args) -> dict[str, Any]:
         return {"world_state": self.context.get("world_state") or {}}

@@ -15,11 +15,21 @@ from __future__ import annotations
 import sqlite3
 from typing import Callable
 
-from . import kb
+from . import constants, decay_world, kb
 
 # Anforderungen, die es von Haus aus gibt (zusätzlich zu allem, wofür die KB
 # bereits ein ``provides:<req>``-Topic führt).
 KNOWN = ("heat", "power", "transmitter")
+
+
+GRID = "grid"  # Pseudo-Lieferant: Stromnetz (kein Inventar-Item)
+
+
+def grid_power_ok(conn: sqlite3.Connection, location_id: int | None) -> bool:
+    """Netzstrom am Ort verfügbar (lokaler Strom über der Lade-Schwelle)?"""
+    if location_id is None:
+        return False
+    return decay_world.infra_for(conn, location_id)["power"] > constants.CHARGE_POWER_MIN
 
 
 def satisfy(
@@ -27,6 +37,7 @@ def satisfy(
     group_id: int,
     req: str,
     owned_fn: Callable[[str], float] | None = None,
+    location_id: int | None = None,
 ) -> dict | None:
     """Liefert {item, consume} eines vorhandenen Lieferanten für ``req``, oder None.
 
@@ -34,7 +45,15 @@ def satisfy(
     Verbrauch passiert beim Anwenden des Effekts (ledger-gebucht).
 
     ``owned_fn(item_id) -> Menge`` überschreibt die Bestandsabfrage (z.B. für das
-    Staging des Adjudikators: Bestand abzüglich bereits vorgemerkter Verbräuche)."""
+    Staging des Adjudikators: Bestand abzüglich bereits vorgemerkter Verbräuche).
+
+    ``location_id``: Ort, an dem man steht. Nur für ``power``: das Stromnetz
+    zählt dort als Lieferant (``{"item": "grid", "consume": 0}`` — kein Item,
+    nichts zu verbuchen), solange der lokale Strom über ``CHARGE_POWER_MIN``
+    liegt (dieselbe Schwelle wie beim Laden). Sonst greifen die KB-Lieferanten
+    (Generator usw.)."""
+    if req == "power" and location_id is not None and grid_power_ok(conn, location_id):
+        return {"item": GRID, "consume": 0.0}
     for fact in kb.list_topic(conn, f"provides:{req}"):
         item_id = fact["key"]
         value = fact.get("value") or {}

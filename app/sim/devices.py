@@ -224,6 +224,26 @@ def powerbank_charge_plan(conn, gid: int) -> dict[str, Any] | None:
             "pb_cost": total / constants.POWERBANK_CAPACITY_PHONES, "source": "powerbank"}
 
 
+def charge_plan(conn, gid: int, location_id: int | None,
+                source: str | None = None) -> dict[str, Any] | None:
+    """Gemeinsame Ladeplan-Wahl (Aktion ``charge`` UND Effekt ``charge_device``):
+    erst Stromnetz (nur bei lokalem Strom > CHARGE_POWER_MIN), dann Powerbank.
+    ``source`` = "grid" | "powerbank" | None (beides erlaubt)."""
+    plan = None
+    if source in (None, "grid"):
+        plan = grid_charge_plan(conn, gid, location_id)
+    if plan is None and source in (None, "powerbank"):
+        plan = powerbank_charge_plan(conn, gid)
+    return plan
+
+
+def charge_block_reason(conn, gid: int) -> str:
+    """Warum es keinen Ladeplan gibt: ``already_full`` oder ``no_power``."""
+    if all(v["units"] - v["charge"] <= 0.02 for v in sync(conn, gid).values()):
+        return "already_full"
+    return "no_power"
+
+
 def apply_charge(conn, gid: int, plan: dict[str, Any], minutes: int | None = None) -> dict[str, float]:
     """Bucht einen Ladeplan (ggf. anteilig, wenn die Aktion unterbrochen wurde)."""
     frac = 1.0 if minutes is None else max(0.0, min(1.0, minutes / plan["minutes"]))

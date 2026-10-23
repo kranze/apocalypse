@@ -32,10 +32,12 @@ from ..llm import get_backend
 from . import (
     capabilities,
     constants,
+    devices,
     generation,
     kb,
     looting,
     movement,
+    provision,
     requirements,
     resources,
     tick,
@@ -45,7 +47,7 @@ from .events import HALTING, emit_event
 OPS = (
     "move_to", "discover", "transfer", "consume_food", "prepare", "search",
     "advance_time", "transform", "establish_capability", "narrate",
-    "fill_water", "barricade", "leave_note",
+    "fill_water", "barricade", "leave_note", "charge_device", "drink",
 )
 
 _FILL_MAX_L = 10.0       # so viel Wasser füllt man in einem Zug höchstens ab
@@ -148,11 +150,23 @@ class Staged:
         self.add(item_id, -qty)
 
 
-def _satisfy(conn, gid, req, st: Staged, extra: dict[str, float] | None = None):
-    """``requirements.satisfy`` gegen den gestageten Bestand (minus ``extra``)."""
+def _power_loc(conn, ctx) -> int | None:
+    """Ort für Netzstrom-Prüfungen: nächste Location in Lade-Reichweite (wie bei
+    der Aktion ``charge``) oder None."""
+    loc = resolve_location(conn, ctx.get("player"), None, reach=constants.LOOT_REACH_M)
+    return loc["id"] if loc else None
+
+
+def _satisfy(conn, gid, req, st: Staged, extra: dict[str, float] | None = None,
+             ctx: dict | None = None):
+    """``requirements.satisfy`` gegen den gestageten Bestand (minus ``extra``).
+    Mit ``ctx`` zählt für ``power`` auch das Stromnetz am Standort (Infra-Gate:
+    nur solange lokal Strom da ist)."""
     ex = extra or {}
+    loc_id = _power_loc(conn, ctx) if (ctx is not None and req == "power") else None
     return requirements.satisfy(
-        conn, gid, req, owned_fn=lambda i: st.owned(conn, gid, i) - ex.get(i, 0.0)
+        conn, gid, req, owned_fn=lambda i: st.owned(conn, gid, i) - ex.get(i, 0.0),
+        location_id=loc_id,
     )
 
 
@@ -296,7 +310,7 @@ def _v_transform(conn, char, eff, ctx, st):
             return (False, f"missing:{item}")
     used = dict(need)
     for req in eff.get("requires", []):
-        src = _satisfy(conn, gid, req, st, used)
+        src = _satisfy(conn, gid, req, st, used, ctx)
         if src is None:
             return (False, f"missing:{req}")
         if src["consume"] > 0:
@@ -327,7 +341,7 @@ def _v_establish(conn, char, eff, ctx, st):
         return (False, "no_recipe")  # z.B. "Mobilfunknetz" -> kein Rezept
     used: dict[str, float] = {}
     for req in recipe["value"].get("requires", []):
-        src = _satisfy(conn, gid, req, st, used)
+        src = _satisfy(conn, gid, req, st, used, ctx)
         if src is None:
             return (False, f"missing:{req}")
         if src["consume"] > 0:
@@ -384,6 +398,33 @@ def _v_fill_water(conn, char, eff, ctx, st):
         st.add(item, take)
         st.loc_taken[(loc["id"], item)] = st.loc_taken.get((loc["id"], item), 0.0) + take
         left -= take
+    return (True, None)
+
+
+def _v_drink(conn, char, eff, ctx, st):
+    """Wasser trinken: aus dem Inventar (gestaged) oder — nur bei Wasserdruck am
+    Ort — aus der Leitung (Infra-Gate; Leitungswasser ist kein Ledger-Gut)."""
+    gid = _group_of(conn, char)
+    if st.owned(conn, gid, provision.WATER) >= 1.0:
+        st.take(provision.WATER, 1.0)
+        return (True, None)
+    p = ctx.get("player") or {}
+    if provision.tap_here(conn, p.get("lat"), p.get("lon")):
+        return (True, None)
+    return (False, "no_tap_water")
+
+
+def _v_charge_device(conn, char, eff, ctx, st):
+    """Gerät laden — dieselben Regeln wie die Aktion ``charge``: Stromnetz nur bei
+    lokalem Strom, sonst Powerbank (``devices.charge_plan``)."""
+    gid = _group_of(conn, char)
+    if not devices.sync(conn, gid):
+        return (False, "no_device")
+    source = eff.get("source")
+    if source not in (None, "grid", "powerbank"):
+        return (False, "bad_params:charge_device")
+    if devices.charge_plan(conn, gid, _power_loc(conn, ctx), source) is None:
+        return (False, devices.charge_block_reason(conn, gid))
     return (True, None)
 
 
@@ -546,6 +587,26 @@ def _a_fill_water(conn, char, eff, ctx):
     return r
 
 
+def _a_drink(conn, char, eff, ctx):
+    return provision.drink(conn, char)
+
+
+def _a_charge_device(conn, char, eff, ctx):
+    """Laden über ``devices``: Plan wählen, Zeit vorrücken (bei Unterbrechung
+    anteilig), Ladung buchen. Keine Inline-Schreibzugriffe."""
+    gid = _group_of(conn, char)
+    plan = devices.charge_plan(conn, gid, _power_loc(conn, ctx), eff.get("source"))
+    if plan is None:
+        return {"ok": False, "reason": devices.charge_block_reason(conn, gid)}
+    adv = _a_advance_time(conn, char, {"minutes": plan["minutes"]}, ctx)
+    done = devices.apply_charge(conn, gid, plan, adv["minutes"])
+    devices.sync(conn, gid)
+    src = "am Stromnetz" if plan["source"] == "grid" else "aus der Powerbank"
+    return {"ok": True, "source": plan["source"], "charged": done,
+            "minutes": adv["minutes"], "interrupts": adv["interrupts"],
+            "narration": f"Du lädst deine Geräte {src}."}
+
+
 def ledger_add(conn, item_id, delta):
     from . import ledger
     ledger.add(conn, item_id, delta)
@@ -624,6 +685,7 @@ _VALIDATORS = {
     "advance_time": _v_advance_time, "transform": _v_transform,
     "establish_capability": _v_establish, "narrate": _v_narrate,
     "fill_water": _v_fill_water, "barricade": _v_barricade, "leave_note": _v_leave_note,
+    "charge_device": _v_charge_device, "drink": _v_drink,
 }
 _APPLIERS = {
     "move_to": _a_move, "discover": _a_discover, "transfer": _a_transfer,
@@ -631,6 +693,7 @@ _APPLIERS = {
     "advance_time": _a_advance_time, "transform": _a_transform,
     "establish_capability": _a_establish, "narrate": _a_narrate,
     "fill_water": _a_fill_water, "barricade": _a_barricade, "leave_note": _a_leave_note,
+    "charge_device": _a_charge_device, "drink": _a_drink,
 }
 
 

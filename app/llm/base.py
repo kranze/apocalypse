@@ -25,7 +25,7 @@ from typing import Any
 EFFECT_OPS = (
     "move_to", "discover", "transfer", "consume_food", "prepare", "search",
     "advance_time", "transform", "establish_capability", "narrate",
-    "fill_water", "barricade", "leave_note",
+    "fill_water", "barricade", "leave_note", "charge_device", "drink",
 )
 
 FEASIBILITY = ("feasible", "risky", "too_complex", "impossible")

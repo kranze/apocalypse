@@ -60,6 +60,36 @@ def _tap_available(conn, loc_id) -> bool:
     return decay_world.infra_for(conn, loc_id)["water"] > constants.WATER_TAP_MIN
 
 
+def tap_here(conn, lat, lon) -> bool:
+    """Leitungswasser am Standort (lat/lon) verfügbar? Öffentliche Naht für die
+    Effekt-Validierung des Adjudikators (gleiche Regel wie die Auto-Versorgung)."""
+    return _tap_available(conn, _current_location(conn, lat, lon))
+
+
+def drink(conn, character_id) -> dict[str, Any]:
+    """Trinkt 1 L: erst Rucksack/Ort (Ledger-gebucht), sonst Leitungswasser am
+    Ort — nur solange dort Wasserdruck herrscht (kein Inventar-Item, kein
+    Ledger-Eintrag, wie in der Auto-Versorgung). Sonst ``ok: False``."""
+    ch = conn.execute(
+        "SELECT group_id, lat, lon, thirst, daily_water_l FROM characters WHERE id = ?;",
+        (character_id,),
+    ).fetchone()
+    loc = _current_location(conn, ch["lat"], ch["lon"])
+    with conn:
+        if _available(conn, ch["group_id"], loc, WATER) >= 1.0 and \
+                _consume(conn, ch["group_id"], loc, WATER, 1.0) >= 1.0:
+            source = "inventory"
+        elif _tap_available(conn, loc):
+            source = "tap"
+        else:
+            return {"ok": False, "reason": "no_tap_water"}
+        thirst = min(1.0, ch["thirst"] + 1.0 / (ch["daily_water_l"] or 2.5))
+        conn.execute("UPDATE characters SET thirst=? WHERE id=?;", (round(thirst, 6), character_id))
+    return {"ok": True, "source": source, "thirst": thirst,
+            "narration": "Du trinkst einen Liter Wasser" + (
+                " aus der Leitung." if source == "tap" else ".")}
+
+
 def _consume_from_location(conn, location_id, item_id, amount) -> float:
     remaining = amount
     for r in conn.execute(
