@@ -22,16 +22,18 @@ from typing import Any, Callable
 from . import (
     adjudicator,
     constants,
+    devices,
     effects,
     generation,
     heat,
     looting,
     movement,
+    online,
     provision,
     resources,
     tick,
 )
-from .events import HALTING
+from .events import DECISION, HALTING, emit_event
 
 # Spalten des Spieler-Objekts — identisch zu GET /world/state -> player.
 CHARACTER_COLS = (
@@ -590,6 +592,165 @@ def _do_sleep(conn, cid, action) -> dict[str, Any]:
     )
 
 
+# --- Geräte & Online (Slice M2 Teil B, Issue #46) -------------------------
+_ONLINE_HINTS = {
+    "no_device": "Du hast kein Smartphone oder Laptop dabei.",
+    "no_battery": "Dein Akku ist leer. Lade ihn erst auf.",
+    "no_network": "Kein Netz. Hier kommst du nicht ins Internet.",
+}
+
+
+def _online_gate(conn, cid, kind):
+    """Gemeinsame Vorprüfung der Online-Aktionen: Gerät, Akku, Netz.
+    Liefert (None, ctx) bei Erfolg, sonst (Ablehnung, None)."""
+    gid = _group_id(conn, cid)
+    if not devices.has_online_device(conn, gid):
+        return _reject(conn, kind, cid, "no_device", _ONLINE_HINTS["no_device"]), None
+    if devices.best_online_device(conn, gid) is None:
+        return _reject(conn, kind, cid, "no_battery", _ONLINE_HINTS["no_battery"]), None
+    here = _location_here(conn, cid, constants.LOOT_REACH_M)
+    net = devices.network_quality(conn, here["id"] if here else None)
+    if not net["online"]:
+        return _reject(conn, kind, cid, "no_network", _ONLINE_HINTS["no_network"]), None
+    return None, {"gid": gid, "net": net, "loc": here}
+
+
+def _finish_online(conn, gid, adv):
+    """Akku für die tatsächlich online verbrachte Zeit abbuchen (danach Leerlauf)."""
+    devices.drain_online(conn, gid, adv["spent"])
+    devices.sync(conn, gid)
+
+
+def _do_read_news(conn, cid, action) -> dict[str, Any]:
+    rej, ctx = _online_gate(conn, cid, "read_news")
+    if rej:
+        return rej
+    day = world_clock(conn)["day"]
+    frag = online.pick_news(conn, day)
+    if frag is None:
+        return _reject(conn, "read_news", cid, "nothing_new",
+                       "Es gibt nichts Neues zu lesen.")
+    minutes = online.news_minutes(conn, day)
+    if devices.online_minutes_available(conn, ctx["gid"]) < minutes:
+        return _reject(conn, "read_news", cid, "no_battery", _ONLINE_HINTS["no_battery"])
+    movement.clear_destination(conn, cid)
+    adv = advance_world(conn, cid, minutes)
+    online.mark_news_read(conn, frag["id"], _tick_now(conn))
+    _finish_online(conn, ctx["gid"], adv)
+    return _response(
+        conn, "read_news", cid, minutes_spent=adv["spent"], stopped=adv["stopped"],
+        events=adv["events"],
+        result={"fragment": dict(frag), "quality": ctx["net"]["quality"]},
+        narration=f"Du liest ({frag['source']}): {frag['title']}. {frag['text']}",
+    )
+
+
+def _do_search_survivors(conn, cid, action) -> dict[str, Any]:
+    rej, ctx = _online_gate(conn, cid, "search_survivors")
+    if rej:
+        return rej
+    if online.contact_count(conn) >= constants.SEARCH_SURVIVORS_MAX_CONTACTS:
+        return _reject(conn, "search_survivors", cid, "no_more_contacts",
+                       "Es melden sich keine weiteren Überlebenden.")
+    minutes = constants.SEARCH_SURVIVORS_MINUTES
+    if devices.online_minutes_available(conn, ctx["gid"]) < minutes:
+        return _reject(conn, "search_survivors", cid, "no_battery",
+                       _ONLINE_HINTS["no_battery"])
+    movement.clear_destination(conn, cid)
+    adv = advance_world(conn, cid, minutes)
+    _finish_online(conn, ctx["gid"], adv)
+    rec = online.record_search(conn, ctx["net"]["quality"], _tick_now(conn))
+    events = list(adv["events"])
+    if rec["reply"]:
+        # Haken für #48: die Antwort steht in online_contacts (handled = 0).
+        with conn:
+            events.append(emit_event(
+                conn, _tick_now(conn), "contact", "Jemand hat geantwortet…",
+                severity=DECISION, subject_type="character", subject_id=cid,
+                payload={"text": rec["reply"]}))
+        narration = (f"Du suchst nach anderen Überlebenden. Jemand hat geantwortet. "
+                     f"{rec['reply']}")
+    else:
+        narration = "Du rufst nach anderen Überlebenden. Keine Antwort."
+    return _response(
+        conn, "search_survivors", cid, minutes_spent=adv["spent"], stopped=adv["stopped"],
+        events=events, narration=narration,
+        result={"tries": rec["tries"], "reply": rec["reply"]},
+    )
+
+
+def _do_download(conn, cid, action) -> dict[str, Any]:
+    pid = action.get("package_id")
+    pkg = online.package(pid) if pid else None
+    if pkg is None:
+        return _reject(conn, "download", cid, "no_such_package", "Dieses Paket gibt es nicht.")
+    if online.progress(conn, pid)["done"]:
+        return _reject(conn, "download", cid, "already_downloaded",
+                       "Dieses Paket hast du schon heruntergeladen.")
+    rej, ctx = _online_gate(conn, cid, "download")
+    if rej:
+        return rej
+    prog = online.progress(conn, pid)
+    bw = online.bandwidth_mb_per_min(ctx["net"]["quality"])
+    minutes = min(
+        online.minutes_needed(prog["remaining_mb"], ctx["net"]["quality"]),
+        constants.DOWNLOAD_CHUNK_MINUTES,
+        devices.online_minutes_available(conn, ctx["gid"]),
+    )
+    if minutes < 1:
+        return _reject(conn, "download", cid, "no_battery", _ONLINE_HINTS["no_battery"])
+    movement.clear_destination(conn, cid)
+    adv = advance_world(conn, cid, minutes, stop="halt")
+    mb = min(prog["remaining_mb"], adv["spent"] * bw)
+    res = online.add_progress(conn, pid, mb, _tick_now(conn))
+    _finish_online(conn, ctx["gid"], adv)
+    stopped = adv["stopped"]
+    if res["done"]:
+        narration = f"Download abgeschlossen: {pkg['title']}. Das Wissen ist jetzt gespeichert."
+    else:
+        if stopped == "done":
+            stopped = "max"
+        narration = (f"Du lädst {pkg['title']} herunter: {res['downloaded_mb']:.0f} von "
+                     f"{pkg['size_mb']} MB. Der Download ist noch nicht fertig.")
+    return _response(
+        conn, "download", cid, minutes_spent=adv["spent"], stopped=stopped,
+        events=adv["events"], narration=narration,
+        result={"package_id": pid, "downloaded_mb": round(res["downloaded_mb"], 2),
+                "size_mb": pkg["size_mb"], "done": res["done"],
+                "quality": ctx["net"]["quality"]},
+    )
+
+
+def _do_charge(conn, cid, action) -> dict[str, Any]:
+    gid = _group_id(conn, cid)
+    if not devices.sync(conn, gid):
+        return _reject(conn, "charge", cid, "no_device", _ONLINE_HINTS["no_device"])
+    here = _location_here(conn, cid, constants.LOOT_REACH_M)
+    source = action.get("source")
+    plan = None
+    if source in (None, "grid"):
+        plan = devices.grid_charge_plan(conn, gid, here["id"] if here else None)
+    if plan is None and source in (None, "powerbank"):
+        plan = devices.powerbank_charge_plan(conn, gid)
+    if plan is None:
+        if all(v["units"] - v["charge"] <= 0.02 for v in devices.sync(conn, gid).values()):
+            return _reject(conn, "charge", cid, "already_full", "Alle Geräte sind schon voll.")
+        return _reject(conn, "charge", cid, "no_power",
+                       "Hier gibt es keinen Strom, und keine Powerbank hilft dir.")
+    movement.clear_destination(conn, cid)
+    adv = advance_world(conn, cid, plan["minutes"], stop="halt")
+    done = devices.apply_charge(conn, gid, plan, adv["spent"])
+    devices.sync(conn, gid)
+    names = _item_names(conn)
+    listing = ", ".join(f"{names.get(i, i)} +{g * 100:.0f} %" for i, g in done.items())
+    src = "am Stromnetz" if plan["source"] == "grid" else "aus der Powerbank"
+    return _response(
+        conn, "charge", cid, minutes_spent=adv["spent"], stopped=adv["stopped"],
+        events=adv["events"], result={"source": plan["source"], "charged": done},
+        narration=f"Du lädst {src} ({_duration(adv['spent'])}): {listing}.",
+    )
+
+
 # --- Freitext -----------------------------------------------------------
 def _do_freetext(conn, cid, action) -> dict[str, Any]:
     override_text = (action.get("override_text") or "").strip()
@@ -674,6 +835,10 @@ _HANDLERS = {
     "search": _do_search,
     "wait": _do_wait,
     "sleep": _do_sleep,
+    "read_news": _do_read_news,
+    "search_survivors": _do_search_survivors,
+    "download": _do_download,
+    "charge": _do_charge,
     "freetext": _do_freetext,
 }
 
@@ -694,6 +859,51 @@ def perform(conn: sqlite3.Connection, character_id: int, action: dict) -> dict[s
     if handler is None:
         return _reject(conn, str(kind), character_id, "unknown_kind", "Unbekannte Aktion.")
     return handler(conn, character_id, action)
+
+
+def _online_actions(conn, cid, gid, here) -> list[dict[str, Any]]:
+    """Laden + Online-Aktionen für die Aktionsleiste (nur, was gerade geht)."""
+    out: list[dict[str, Any]] = []
+    loc_id = here["id"] if here else None
+    plan = devices.grid_charge_plan(conn, gid, loc_id) or devices.powerbank_charge_plan(conn, gid)
+    if plan is not None:
+        out.append({
+            "kind": "charge",
+            "label": "Laden (Stromnetz)" if plan["source"] == "grid" else "Laden (Powerbank)",
+            "source": plan["source"], "minutes": plan["minutes"],
+        })
+    best = devices.best_online_device(conn, gid)
+    if best is None:
+        return out
+    net = devices.network_quality(conn, loc_id)
+    if not net["online"]:
+        return out
+    day = world_clock(conn)["day"]
+    cap = devices.online_minutes_available(conn, gid)
+    if online.pick_news(conn, day) is not None and cap >= constants.READ_NEWS_MINUTES[1]:
+        out.append({"kind": "read_news", "label": "Nachrichten lesen",
+                    "minutes": constants.READ_NEWS_MINUTES[1]})
+    if online.contact_count(conn) < constants.SEARCH_SURVIVORS_MAX_CONTACTS \
+            and cap >= constants.SEARCH_SURVIVORS_MINUTES:
+        out.append({"kind": "search_survivors", "label": "Nach Überlebenden suchen",
+                    "minutes": constants.SEARCH_SURVIVORS_MINUTES})
+    drain = constants.DEVICE_DRAIN_ONLINE_PER_H[best[0]]
+    options = []
+    for p in online.packages():
+        pr = online.progress(conn, p["id"])
+        if pr["done"]:
+            continue
+        need = online.minutes_needed(pr["remaining_mb"], net["quality"])
+        options.append({
+            "package_id": p["id"], "title": p["title"], "size_mb": p["size_mb"],
+            "remaining_mb": round(pr["remaining_mb"], 1),
+            "progress": round(pr["fraction"], 3),
+            "minutes_total": need, "battery_pct": round(need / 60.0 * drain * 100.0, 1),
+        })
+    if options:
+        out.append({"kind": "download", "label": "Wissen herunterladen", "minutes": None,
+                    "options": options, "quality": net["quality"]})
+    return out
 
 
 def available(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]:
@@ -767,6 +977,8 @@ def available(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]:
                 "kind": "prepare", "label": "Zubereiten",
                 "minutes": constants.PREPARE_MINUTES, "options": options,
             })
+
+    actions.extend(_online_actions(conn, character_id, gid, here))
 
     actions.append({"kind": "wait", "label": "1 Std. warten", "minutes": 60})
     until_morning = minutes_until_morning(conn)

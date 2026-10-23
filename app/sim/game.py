@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from ..osm import geocode
-from . import biology, chatlog, survivors
+from . import biology, chatlog, constants, devices, ledger, online, survivors
 
 INTRO = (
     "Du wachst auf. Es ist still — vollkommen still.\n"
@@ -58,6 +58,7 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
         "DELETE FROM resource_audit;", "DELETE FROM capabilities;",
         "DELETE FROM locations;", "DELETE FROM survivors;",
         "DELETE FROM survivor_groups;",
+        "DELETE FROM location_infra;",
         "DELETE FROM world_chunks;",
         "UPDATE world SET tick = 0, survivor_sim_day = 0 WHERE id = 1;",
     ):
@@ -87,6 +88,17 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
         ),
     )
     conn.commit()
+
+    # 4b) Online-Zustand zurücksetzen, Startausrüstung: ein Smartphone (80 %).
+    #     Das Item ist ledgergebucht (Quelle); der Akkustand ist kein Ledger-Gut.
+    online.reset_online_state(conn)
+    with conn:
+        conn.execute(
+            "INSERT INTO group_inventory (group_id, item_id, quantity, quality, acquired_tick) "
+            "VALUES (1, 'smartphone', 1, 1.0, 0) ON CONFLICT(group_id, item_id, quality) "
+            "DO UPDATE SET quantity = 1;")
+        ledger.add(conn, "smartphone", 1)
+        devices.grant(conn, 1, "smartphone", constants.DEVICE_START_CHARGE)
 
     # 5) Chat-Log zurücksetzen und Intro als erste Narrator-Zeile schreiben.
     chatlog.clear(conn, 1)

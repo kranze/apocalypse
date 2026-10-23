@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from . import config, db
 from .osm import loader
 from .sim import (
-    actions as actions_mod, adjudicator, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
+    actions as actions_mod, adjudicator, online, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
 from .sim import chunks as chunks_mod
 from .sim import survivor_sim, survivors as survivors_mod
@@ -460,6 +460,11 @@ def world_state() -> dict:
         player = conn.execute(
             f"SELECT {_CHARACTER_COLS} FROM characters WHERE id = 1;"
         ).fetchone()
+        infra = None
+        if player is not None and player["group_id"] is not None:
+            here = (actions_mod._location_here(conn, 1, constants.LOOT_REACH_M)
+                    if player["lat"] is not None else None)
+            infra = online.hud_infra(conn, player["group_id"], here["id"] if here else None)
     finally:
         conn.close()
     dt = datetime.fromisoformat(w["start_datetime"]) + timedelta(minutes=w["tick"])
@@ -473,6 +478,7 @@ def world_state() -> dict:
         "tick_minutes": constants.TICK_MINUTES,
         "weather": {"temp_c": w["weather_temp_c"], "state": w["weather_state"]},
         "player": dict(player) if player else None,
+        "infra": infra,
     }
 
 

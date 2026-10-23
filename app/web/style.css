@@ -218,3 +218,12 @@ button:disabled { opacity: .4; cursor: default; }
 .actionbar .split { display: inline-flex; gap: 1px; }
 .actionbar .split button { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .actionbar .split select.pick { width: 22px; padding: 0; font-size: 12px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+
+/* Online: Download-Auswahl (Issue #46) */
+.dl-chooser { margin: 6px 0; padding: 6px; background: var(--panel2); border-radius: 6px; font-size: 12px; }
+.dl-chooser .dl-head { color: var(--muted); margin-bottom: 4px; }
+.dl-chooser .dl-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.dl-chooser .dl-title { flex: 1; }
+.dl-chooser .dl-meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+.dl-chooser .dl-progress { height: 3px; background: var(--panel); border-radius: 2px; overflow: hidden; }
+.dl-chooser .dl-progress span { display: block; height: 100%; background: var(--accent); }

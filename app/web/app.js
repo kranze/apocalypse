@@ -117,12 +117,33 @@ function setBar(fillId, valId, value, thresholds) {
   document.getElementById(valId).textContent = Math.round(pct) + "%";
 }
 
+// Welt-Infrastruktur (Strom/Wasser am Standort, Netz, Gerätakku) aus /world/state -> infra.
+function renderInfra(infra) {
+  if (!infra) return;
+  document.getElementById("world-phase").textContent = infra.phase || "";
+  setBar("power-fill", "power-val", infra.power);
+  setBar("water-fill", "water-val", infra.water);
+  setBar("cell-fill", "cell-val", infra.cellular);
+  setBar("net-fill", "net-val", infra.quality);
+  const devs = infra.devices || [];
+  const phone = devs.find((d) => d.item_id === "smartphone") || devs.find((d) => d.item_id === "laptop");
+  const pb = devs.find((d) => d.item_id === "powerbank");
+  if (phone) setBar("batt-fill", "batt-val", phone.pct / 100);
+  else setBar("batt-fill", "batt-val", 0);
+  const where = infra.scope === "here" ? "am Ort" : "typisch für die Gegend";
+  document.getElementById("infra-note").textContent =
+    `Strom/Wasser: ${where}` + (infra.wifi ? " · WLAN da" : "")
+    + (pb ? ` · Powerbank ${Math.round(pb.pct)} %` : "")
+    + (phone ? "" : " · kein Gerät");
+}
+
 async function refreshState() {
   const s = await getJSON("/world/state");
   const dayNo = (s.day ?? 0) + 1;
   document.getElementById("daytime").textContent =
     `Tag ${dayNo} von ${s.days_total ?? 7} · ${s.time_of_day ?? "--:--"}`;
   document.getElementById("clock").textContent = `Wetter: ${s.weather.temp_c}°C`;
+  renderInfra(s.infra);
   const p = s.player;
   if (p) {
     setBar("hunger-fill", "hunger-val", p.hunger);
@@ -545,7 +566,19 @@ async function loadActionBar() {
   try {
     const av = await getJSON(`/actions/available?character_id=${PLAYER_ID}`);
     bar.innerHTML = "";
+    const chooser = document.getElementById("dl-chooser");
+    let keepChooser = false;
     for (const a of av.actions || []) {
+      if (a.kind === "download") {
+        // Download: Knopf öffnet die Paketauswahl mit Größe, Dauer, Akkuverbrauch.
+        const db = document.createElement("button");
+        db.textContent = a.label;
+        db.disabled = actionBusy;
+        db.onclick = () => { chooser.classList.toggle("hidden"); renderChooser(a); };
+        bar.appendChild(db);
+        if (!chooser.classList.contains("hidden")) { renderChooser(a); keepChooser = true; }
+        continue;
+      }
       const b = document.createElement("button");
       b.textContent = a.label;
       if (a.minutes != null) {
@@ -587,7 +620,49 @@ async function loadActionBar() {
         bar.appendChild(b);
       }
     }
+    if (!keepChooser) { chooser.classList.add("hidden"); chooser.innerHTML = ""; }
   } catch (e) { /* Leiste nicht kritisch */ }
+}
+
+function fmtMinutes(m) {
+  if (m >= 10 ** 8) return "nie";
+  const h = Math.floor(m / 60), r = m % 60;
+  return h ? `${h} Std. ${r} min` : `${r} min`;
+}
+
+// Paketauswahl für Wissens-Downloads (Teilfortschritt wird angezeigt).
+function renderChooser(a) {
+  const el = document.getElementById("dl-chooser");
+  el.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "dl-head";
+  head.textContent = `Verbindung ${Math.round((a.quality ?? 0) * 100)} % · Schätzung bei aktueller Qualität`;
+  el.appendChild(head);
+  for (const o of a.options || []) {
+    const row = document.createElement("div");
+    row.className = "dl-row";
+    const t = document.createElement("span");
+    t.className = "dl-title";
+    t.textContent = o.title;
+    const m = document.createElement("span");
+    m.className = "dl-meta";
+    m.textContent = `${o.size_mb} MB · ${fmtMinutes(o.minutes_total)} · ${o.battery_pct} % Akku`
+      + (o.progress > 0 ? ` · ${Math.round(o.progress * 100)} % da` : "");
+    const btn = document.createElement("button");
+    btn.textContent = o.progress > 0 ? "Fortsetzen" : "Laden";
+    btn.disabled = actionBusy;
+    btn.onclick = () => doAction({ kind: "download", package_id: o.package_id });
+    row.append(t, m, btn);
+    el.appendChild(row);
+    if (o.progress > 0) {
+      const pr = document.createElement("div");
+      pr.className = "dl-progress";
+      const sp = document.createElement("span");
+      sp.style.width = Math.round(o.progress * 100) + "%";
+      pr.appendChild(sp);
+      el.appendChild(pr);
+    }
+  }
 }
 
 // Einziger Weg, Zeit vergehen zu lassen: eine Aktion an den Sim-Kern senden.

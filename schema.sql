@@ -98,6 +98,40 @@ CREATE TABLE location_infra (
     updated_tick    INTEGER NOT NULL DEFAULT 0
 );
 
+-- Geräte-Akku (Slice M2 Teil B, Issue #46). KEIN Ledger-Gut: die Geräte selbst sind
+-- Items in group_inventory (Loot = Transfer); hier steht nur der Ladezustand.
+-- charge = Summe der Ladungen aller Einheiten (je 0..1, also 0..units); wird lazy
+-- um den Leerlaufverbrauch seit updated_tick vermindert (siehe sim/devices.py).
+CREATE TABLE device_state (
+    group_id     INTEGER NOT NULL,
+    item_id      TEXT    NOT NULL REFERENCES item_catalog(id),
+    units        REAL    NOT NULL DEFAULT 0.0,
+    charge       REAL    NOT NULL DEFAULT 0.0,
+    updated_tick INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (group_id, item_id)
+);
+-- Gelesene Nachrichten-Fragmente (app/data/news_fragments.json).
+CREATE TABLE news_read (
+    fragment_id TEXT PRIMARY KEY,
+    read_tick   INTEGER NOT NULL
+);
+-- Download-Fortschritt je Wissenspaket (app/data/knowledge_packages.json).
+CREATE TABLE package_progress (
+    package_id    TEXT PRIMARY KEY,
+    downloaded_mb REAL NOT NULL DEFAULT 0.0,
+    done_tick     INTEGER                       -- NULL = nicht fertig
+);
+-- Online-Kontakte (Aktion search_survivors): kind 'attempt' = Suchversuch,
+-- 'reply' = Antwort. Haken für #48 (Companion): offene Antworten (handled = 0)
+-- via sim/online.py pending_contacts() lesen, nach Verwendung handled = 1 setzen.
+CREATE TABLE online_contacts (
+    id      INTEGER PRIMARY KEY,
+    tick    INTEGER NOT NULL,
+    kind    TEXT    NOT NULL,
+    text    TEXT,
+    handled INTEGER NOT NULL DEFAULT 0
+);
+
 -- ---------------------------------------------------------------------------
 -- GRUPPEN (Schritt 1: nur die Spieler-Gruppe; später NPC-Gruppen)
 -- ---------------------------------------------------------------------------
@@ -353,7 +387,10 @@ INSERT INTO item_catalog (id, name, category, weight_kg, kcal_per_unit, decay_ha
   ('first_aid_kit', 'Erste-Hilfe-Set',    'medical',  0.60,  NULL,  NULL,    0, 0, 0.0, NULL),
   ('hammer',        'Hammer',             'tool',     0.80,  NULL,  NULL,    0, 0, 0.0, NULL),
   ('rope',          'Seil 10m',           'material', 1.00,  NULL,  NULL,    1, 0, 0.0, NULL),
-  ('duct_tape',     'Gewebeband',         'material', 0.30,  NULL,  NULL,    1, 0, 0.0, NULL);
+  ('duct_tape',     'Gewebeband',         'material', 0.30,  NULL,  NULL,    1, 0, 0.0, NULL),
+  ('smartphone',    'Smartphone',         'device',   0.20,  NULL,  NULL,    0, 0, 0.0, NULL),
+  ('laptop',        'Laptop',             'device',   1.80,  NULL,  NULL,    0, 0, 0.0, NULL),
+  ('powerbank',     'Powerbank',          'device',   0.40,  NULL,  NULL,    0, 0, 0.0, NULL);
 
 -- Welt-Singleton initialisieren (world_seed später vom App-Start gesetzt)
 INSERT INTO world (id, world_seed, tick, start_datetime, phase, survivor_sim_day)

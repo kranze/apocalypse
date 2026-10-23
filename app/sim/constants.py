@@ -123,6 +123,34 @@ INFRA_PHASES = (
     (float("inf"), "Verwilderung"),
 )
 
+# --- Geräte & Online (Slice M2 Teil B, Issue #46) ------------------------
+# Akku = Bruchteil 0..1 je Geräteeinheit (kein Ledger-Gut). Verbrauch je Spielstunde.
+DEVICE_DRAIN_ONLINE_PER_H = {"smartphone": 0.10, "laptop": 0.08}   # bei Online-Aktionen
+DEVICE_DRAIN_IDLE_PER_H = {"smartphone": 0.004, "laptop": 0.002, "powerbank": 0.0005}
+DEVICE_CHARGE_PER_H = {"smartphone": 0.5, "laptop": 0.35, "powerbank": 0.25}  # am Stromnetz
+DEVICE_START_CHARGE = 0.8        # Startsmartphone
+DEVICE_FOUND_CHARGE = 0.5        # gefundene Geräte (Loot) sind halb voll
+POWERBANK_CAPACITY_PHONES = 2.0  # eine volle Powerbank = so viele Smartphone-Ladungen
+POWERBANK_OUTPUT_PER_H = 0.8     # Smartphone-Ladung je Stunde aus der Powerbank
+CHARGE_POWER_MIN = 0.5           # lokaler Strom, ab dem Laden am Netz möglich ist
+CHARGE_MIN_MINUTES = 30
+CHARGE_MAX_MINUTES = 240
+DEVICE_MIN_CHARGE = 0.03         # darunter ist ein Gerät praktisch leer
+# Netzqualität = internet_at(Tag) * Zugang; Zugang = max(Mobilfunk, 1.0 bei WLAN am Ort
+# mit Strom > WIFI_POWER_MIN). Unter ONLINE_MIN_QUALITY geht nichts mehr.
+WIFI_POWER_MIN = 0.3
+ONLINE_MIN_QUALITY = 0.05
+READ_NEWS_MINUTES = (15, 30)     # je nach Würfel zwischen min und max
+SEARCH_SURVIVORS_MINUTES = 45
+SEARCH_SURVIVORS_BASE = 0.06     # Grundchance je Versuch
+SEARCH_SURVIVORS_STEP = 0.07     # + je früherem Versuch
+SEARCH_SURVIVORS_CAP = 0.6
+SEARCH_SURVIVORS_MAX_CONTACTS = 3
+# Downloads: Bandbreite in MB je Minute bei Qualität 1.0; eine Aktion läuft höchstens
+# DOWNLOAD_CHUNK_MINUTES (Teilfortschritt bleibt erhalten).
+DOWNLOAD_MB_PER_MIN = 0.3
+DOWNLOAD_CHUNK_MINUTES = 120
+
 # --- Capabilities -------------------------------------------------------
 # Chance pro Tag, dass ein aktiver SSID-Beacon einen Funk-Kontakt erzeugt.
 BEACON_CONTACT_PER_DAY = 0.5

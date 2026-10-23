@@ -77,6 +77,19 @@ _MIGRATIONS = (
     " power REAL NOT NULL DEFAULT 1.0, water REAL NOT NULL DEFAULT 1.0,"
     " refrigeration REAL NOT NULL DEFAULT 1.0, structural REAL NOT NULL DEFAULT 1.0,"
     " overgrowth REAL NOT NULL DEFAULT 0.0, updated_tick INTEGER NOT NULL DEFAULT 0);",
+    # Geräte, Online-Aktionen (Slice M2 Teil B, Issue #46)
+    "CREATE TABLE IF NOT EXISTS device_state ("
+    " group_id INTEGER NOT NULL, item_id TEXT NOT NULL REFERENCES item_catalog(id),"
+    " units REAL NOT NULL DEFAULT 0.0, charge REAL NOT NULL DEFAULT 0.0,"
+    " updated_tick INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (group_id, item_id));",
+    "CREATE TABLE IF NOT EXISTS news_read ("
+    " fragment_id TEXT PRIMARY KEY, read_tick INTEGER NOT NULL);",
+    "CREATE TABLE IF NOT EXISTS package_progress ("
+    " package_id TEXT PRIMARY KEY, downloaded_mb REAL NOT NULL DEFAULT 0.0,"
+    " done_tick INTEGER);",
+    "CREATE TABLE IF NOT EXISTS online_contacts ("
+    " id INTEGER PRIMARY KEY, tick INTEGER NOT NULL, kind TEXT NOT NULL,"
+    " text TEXT, handled INTEGER NOT NULL DEFAULT 0);",
 )
 
 # (tabelle, spalte, DDL-Definition) — nur angelegt, wenn die Spalte fehlt.
@@ -148,6 +161,10 @@ def _seed_static(conn: sqlite3.Connection) -> None:
         "('hammer',      'Hammer',         'tool',    0.80, NULL, NULL, 0, 0, 0.0, NULL)",
         "('rope',        'Seil 10m',       'material',1.00, NULL, NULL, 1, 0, 0.0, NULL)",
         "('duct_tape',   'Gewebeband',     'material',0.30, NULL, NULL, 1, 0, 0.0, NULL)",
+        # Geräte mit Akku (Issue #46)
+        "('smartphone',  'Smartphone',     'device',  0.20, NULL, NULL, 0, 0, 0.0, NULL)",
+        "('laptop',      'Laptop',         'device',  1.80, NULL, NULL, 0, 0, 0.0, NULL)",
+        "('powerbank',   'Powerbank',      'device',  0.40, NULL, NULL, 0, 0, 0.0, NULL)",
     ):
         conn.execute(
             "INSERT OR IGNORE INTO item_catalog (id, name, category, weight_kg, "

@@ -10,7 +10,7 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   />
-  <link rel="stylesheet" href="/style.css?v=9" />
+  <link rel="stylesheet" href="/style.css?v=10" />
 </head>
 <body>
   <div id="map"></div>
@@ -25,6 +25,14 @@
     <div class="row buttons">
       <button id="btn-newgame" title="Neues Spiel beginnen">⟳ Neues Spiel</button>
     </div>
+
+    <h2>Welt <span id="world-phase" class="count"></span></h2>
+    <div class="needbar"><label>Strom</label><div class="bar"><span id="power-fill"></span></div><span id="power-val" class="val">—</span></div>
+    <div class="needbar"><label>Wasser</label><div class="bar"><span id="water-fill"></span></div><span id="water-val" class="val">—</span></div>
+    <div class="needbar"><label>Mobilfunk</label><div class="bar"><span id="cell-fill"></span></div><span id="cell-val" class="val">—</span></div>
+    <div class="needbar"><label>Internet</label><div class="bar"><span id="net-fill"></span></div><span id="net-val" class="val">—</span></div>
+    <div class="needbar"><label>Akku</label><div class="bar"><span id="batt-fill"></span></div><span id="batt-val" class="val">—</span></div>
+    <div class="row needs" id="infra-note"></div>
 
     <h2>Zustand</h2>
     <div class="row" id="who">—</div>
@@ -46,6 +54,7 @@
     <h2>Chat</h2>
     <div id="chat"></div>
     <div id="actionbar" class="actionbar"></div>
+    <div id="dl-chooser" class="dl-chooser hidden"></div>
     <div class="row cmdrow">
       <input id="cmd" type="text" placeholder="Was tust du? (z. B. ich suche Wasser)" autocomplete="off" />
       <button id="btn-cmd">▶</button>
@@ -113,6 +122,6 @@
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
   ></script>
-  <script src="/app.js?v=11"></script>
+  <script src="/app.js?v=12"></script>
 </body>
 </html>

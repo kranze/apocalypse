@@ -1,0 +1,69 @@
+{
+  "_comment": "Wissens-Katalog (Issue #46). size_mb: klein 50, mittel 150, gross 450. 'unlocks' beschreibt, was der Sim-Kern bei Abschluss in die Knowledge Base schreibt (provenance=curated): immer ein Flag knowledge:<id>; zusaetzlich 'kb' = Liste von [topic, key, value].",
+  "packages": [
+    {
+      "id": "water_treatment", "title": "Wasser aufbereiten", "size_mb": 50,
+      "summary": "Abkochen und Filtern: Regen-, Bach- und Teichwasser trinkbar machen.",
+      "unlocks": ["capability_recipe:water_treatment"],
+      "kb": [["capability_recipe:water_treatment", "water_treatment",
+              {"requires": ["heat"], "upkeep": {"item": "firewood", "per_tick": 0.01}, "range_km": 0.0}]]
+    },
+    {
+      "id": "first_aid", "title": "Erste Hilfe", "size_mb": 150,
+      "summary": "Verletzungen versorgen; bessere Heilung mit Verbandszeug und Medizin.",
+      "unlocks": ["knowledge:first_aid"], "kb": []
+    },
+    {
+      "id": "offline_maps", "title": "Offline-Karten", "size_mb": 450,
+      "summary": "Gebäudetypen im weiteren Umkreis sichtbar, schnellere Routen.",
+      "unlocks": ["knowledge:offline_maps"], "kb": []
+    },
+    {
+      "id": "fire_cooking", "title": "Feuer & Kochen ohne Strom", "size_mb": 50,
+      "summary": "Kochstelle aus Holz oder Spiritus bauen.",
+      "unlocks": ["capability_recipe:cooking_fire"],
+      "kb": [["capability_recipe:cooking_fire", "cooking_fire",
+              {"requires": ["heat"], "upkeep": {"item": "firewood", "per_tick": 0.01}, "range_km": 0.0}]]
+    },
+    {
+      "id": "bike_repair", "title": "Fahrrad reparieren", "size_mb": 50,
+      "summary": "Fahrrad fahrtüchtig machen, schnellere Fortbewegung.",
+      "unlocks": ["knowledge:bike_repair"], "kb": []
+    },
+    {
+      "id": "car_fuel", "title": "Auto: Sprit abzapfen & starten", "size_mb": 150,
+      "summary": "Benzin aus Tanks gewinnen, Fahrzeug nutzen (Entscheidung Tag 7).",
+      "unlocks": ["knowledge:car_fuel"], "kb": []
+    },
+    {
+      "id": "radio_basics", "title": "Funk-Grundlagen", "size_mb": 150,
+      "summary": "Funkgerät oder LoRa betreiben, Fernkontakte.",
+      "unlocks": ["knowledge:radio_basics"], "kb": []
+    },
+    {
+      "id": "solar_batteries", "title": "Solar & Akkus", "size_mb": 150,
+      "summary": "Geräte über Solar oder Autobatterie laden.",
+      "unlocks": ["knowledge:solar_batteries"], "kb": []
+    },
+    {
+      "id": "food_preservation", "title": "Lebensmittel haltbar machen", "size_mb": 50,
+      "summary": "Verderb von Frischware bremsen (Trocknen, Salzen).",
+      "unlocks": ["knowledge:food_preservation"], "kb": []
+    },
+    {
+      "id": "wild_plants", "title": "Essbare Wildpflanzen", "size_mb": 150,
+      "summary": "Sammeln am Stadtrand als Nahrungsquelle.",
+      "unlocks": ["knowledge:wild_plants"], "kb": []
+    },
+    {
+      "id": "shelter_warmth", "title": "Notunterkunft & Wärme", "size_mb": 50,
+      "summary": "Unterschlupf verbessern (Zufriedenheit, Schlaf, Exposition).",
+      "unlocks": ["knowledge:shelter_warmth"], "kb": []
+    },
+    {
+      "id": "disease_control", "title": "Seuchenschutz & Leichen", "size_mb": 50,
+      "summary": "Krankheitsrisiko in der Stadt senken.",
+      "unlocks": ["knowledge:disease_control"], "kb": []
+    }
+  ]
+}

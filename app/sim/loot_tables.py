@@ -29,6 +29,7 @@ LOOT_TABLES: dict[str, list[dict]] = {
         {"item_id": "chocolate", "chance": 0.70, "qty_min": 3, "qty_max": 25},
         {"item_id": "bandage", "chance": 0.30, "qty_min": 1, "qty_max": 5},
         {"item_id": "painkillers", "chance": 0.25, "qty_min": 1, "qty_max": 4},
+        {"item_id": "powerbank", "chance": 0.25, "qty_min": 1, "qty_max": 2},
     ],
     "fuel_station": [
         {"item_id": "water_1l", "chance": 0.90, "qty_min": 4, "qty_max": 24},
@@ -40,6 +41,7 @@ LOOT_TABLES: dict[str, list[dict]] = {
         {"item_id": "duct_tape", "chance": 0.40, "qty_min": 1, "qty_max": 3},
         {"item_id": "gasoline", "chance": 0.50, "qty_min": 1, "qty_max": 4},
         {"item_id": "firewood", "chance": 0.30, "qty_min": 1, "qty_max": 5},
+        {"item_id": "powerbank", "chance": 0.30, "qty_min": 1, "qty_max": 1},
     ],
     "pharmacy": [
         {"item_id": "bandage", "chance": 0.95, "qty_min": 5, "qty_max": 30},
@@ -85,6 +87,8 @@ LOOT_TABLES: dict[str, list[dict]] = {
         {"item_id": "hammer", "chance": 0.15, "qty_min": 1, "qty_max": 1},
         {"item_id": "duct_tape", "chance": 0.15, "qty_min": 1, "qty_max": 1},
         {"item_id": "firewood", "chance": 0.25, "qty_min": 1, "qty_max": 6},
+        {"item_id": "laptop", "chance": 0.15, "qty_min": 1, "qty_max": 1},
+        {"item_id": "powerbank", "chance": 0.12, "qty_min": 1, "qty_max": 1},
     ],
     # generisches Nicht-Wohngebäude: spärlich
     "building": [
