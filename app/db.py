@@ -72,6 +72,11 @@ _MIGRATIONS = (
     " loaded_at_tick INTEGER,"
     " building_count INTEGER,"
     " PRIMARY KEY (cx, cy));",
+    "CREATE TABLE IF NOT EXISTS location_infra ("
+    " location_id INTEGER PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,"
+    " power REAL NOT NULL DEFAULT 1.0, water REAL NOT NULL DEFAULT 1.0,"
+    " refrigeration REAL NOT NULL DEFAULT 1.0, structural REAL NOT NULL DEFAULT 1.0,"
+    " overgrowth REAL NOT NULL DEFAULT 0.0, updated_tick INTEGER NOT NULL DEFAULT 0);",
 )
 
 # (tabelle, spalte, DDL-Definition) — nur angelegt, wenn die Spalte fehlt.

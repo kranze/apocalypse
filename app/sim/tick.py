@@ -16,7 +16,7 @@ from collections.abc import Collection
 from typing import Any
 
 from .. import config
-from . import audit, biology, capabilities, constants, movement, provision, resources, survivor_sim
+from . import audit, biology, capabilities, constants, decay_world, movement, provision, resources, survivor_sim
 from .events import HALTING
 
 
@@ -66,6 +66,9 @@ def advance_tick(
 
         # Capabilities: Upkeep + Folgen (z.B. SSID-Beacon-Kontakte)
         interrupts += capabilities.advance(conn, minutes, t1, seed)
+
+        # Infrastruktur-Verfall (Strom/Wasser/Kühlung): nach Zeit/Bewegung, vor Ressourcen
+        decay_world.advance(conn, minutes)
 
         # Phase 2 — Ressourcen: Verderb (Verbrauch = explizites eat(), nicht hier)
         interrupts += resources.apply_decay(conn, t1)

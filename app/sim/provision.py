@@ -17,7 +17,7 @@ import sqlite3
 from collections.abc import Collection
 from typing import Any
 
-from . import constants, kb, ledger
+from . import constants, decay_world, kb, ledger
 from .events import emit_event
 
 WATER = "water_1l"
@@ -40,6 +40,24 @@ def _current_location(conn, lat, lon) -> int | None:
         if d <= best_d:
             best, best_d = r["id"], d
     return best
+
+
+def group_location(conn, group_id) -> int | None:
+    """Ort, an dem sich die Gruppe gerade befindet (erster lebender Charakter mit
+    Position, nächstes entdecktes Gebäude in Reichweite) oder None."""
+    ch = conn.execute(
+        "SELECT lat, lon FROM characters WHERE group_id = ? AND is_alive = 1 "
+        "AND lat IS NOT NULL ORDER BY id LIMIT 1;", (group_id,)
+    ).fetchone()
+    return _current_location(conn, ch["lat"], ch["lon"]) if ch else None
+
+
+def _tap_available(conn, loc_id) -> bool:
+    """Leitungswasser nur, solange am Ort der Wasserdruck über der Schwelle liegt.
+    Vorher gab es keine implizite Wasserquelle (Wasser kam nur aus Items)."""
+    if loc_id is None:
+        return False
+    return decay_world.infra_for(conn, loc_id)["water"] > constants.WATER_TAP_MIN
 
 
 def _consume_from_location(conn, location_id, item_id, amount) -> float:
@@ -185,18 +203,24 @@ def auto_provision(
         loc = _current_location(conn, char["lat"], char["lon"])
 
         # --- Durst: trinken ---
-        thirst, drank = char["thirst"], 0.0
+        thirst, drank, tap = char["thirst"], 0.0, 0.0
         steps = 0
         while thirst < constants.PROVISION_TARGET and steps < _MAX_STEPS:
             steps += 1
-            if _available(conn, gid, loc, WATER) < 1.0 or _consume(conn, gid, loc, WATER, 1.0) < 1.0:
+            if _available(conn, gid, loc, WATER) >= 1.0 and _consume(conn, gid, loc, WATER, 1.0) >= 1.0:
+                pass  # aus Rucksack/Ort-Vorrat (Ledger-gebucht)
+            elif _tap_available(conn, loc):
+                tap += 1.0  # Leitungswasser: nur bei Wasserdruck, kein Inventar-Item
+            else:
                 break
             thirst = min(1.0, thirst + 1.0 / (char["daily_water_l"] or 2.5))
             drank += 1.0
         if drank:
             conn.execute("UPDATE characters SET thirst=? WHERE id=?;", (round(thirst, 6), char["id"]))
-            events.append(emit_event(conn, now_tick, "need",
-                          f"{char['name']} trinkt {drank:g} L Wasser.",
+            txt = f"{char['name']} trinkt {drank:g} L Wasser."
+            if tap:
+                txt += f" ({tap:g} L aus der Leitung)"
+            events.append(emit_event(conn, now_tick, "need", txt,
                           subject_type="character", subject_id=char["id"]))
 
         # --- Hunger: essen (auto-kochen falls nötig) ---

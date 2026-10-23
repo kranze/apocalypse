@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from . import constants, heat, ledger
+from . import constants, decay_world, heat, ledger, provision
 from .events import emit_event
 
 WATER_ITEM = "water_1l"
@@ -24,6 +24,21 @@ def quality_at(anchor_tick: int, now_tick: int, halflife_min: int | None) -> flo
     if halflife_min is None:
         return 1.0
     elapsed = max(0, now_tick - anchor_tick)
+    return 0.5 ** (elapsed / halflife_min)
+
+
+def quality_cooled(anchor_tick: int, now_tick: int, halflife_min: int | None,
+                   cooling_lost_tick: int | None) -> float:
+    """Wie ``quality_at``, aber ohne Kühlung am Lagerort verdirbt es schneller:
+    ab ``cooling_lost_tick`` läuft die Alterung mit SPOILAGE_WARM_FACTOR.
+    Geschlossene Form (zustandslos, deterministisch); ``None`` = kein Ortsbezug
+    -> unverändertes Verhalten."""
+    if halflife_min is None:
+        return 1.0
+    elapsed = max(0, now_tick - anchor_tick)
+    if cooling_lost_tick is not None:
+        warm = max(0, now_tick - max(anchor_tick, cooling_lost_tick))
+        elapsed += (constants.SPOILAGE_WARM_FACTOR - 1.0) * warm
     return 0.5 ** (elapsed / halflife_min)
 
 
@@ -46,15 +61,20 @@ def apply_decay(conn: sqlite3.Connection, now_tick: int) -> list[dict[str, Any]]
     """
     halflives = _halflives(conn)
     spoiled: dict[str, float] = {}
+    seed = conn.execute("SELECT world_seed FROM world WHERE id = 1;").fetchone()["world_seed"]
+    group_cool: dict[int, int | None] = {}  # Gruppe -> Tick des Kühlungsausfalls am Aufenthaltsort
 
     # --- location_inventory: simples Update, kein Merge nötig ---
     for row in conn.execute(
-        "SELECT id, item_id, quantity, produced_tick FROM location_inventory;"
+        "SELECT id, location_id, item_id, quantity, quality, produced_tick "
+        "FROM location_inventory;"
     ).fetchall():
         hl = halflives.get(row["item_id"])
         if hl is None:
             continue
-        q = quality_at(row["produced_tick"], now_tick, hl)
+        lost = decay_world.cooling_lost_tick(seed, row["location_id"])
+        # Qualität sinkt nur (kein Wiederaufleben, falls sich Kühlungslage ändert).
+        q = min(quality_cooled(row["produced_tick"], now_tick, hl, lost), row["quality"])
         if q < constants.SPOIL_THRESHOLD:
             spoiled[row["item_id"]] = spoiled.get(row["item_id"], 0.0) + row["quantity"]
             conn.execute("DELETE FROM location_inventory WHERE id = ?;", (row["id"],))
@@ -66,7 +86,7 @@ def apply_decay(conn: sqlite3.Connection, now_tick: int) -> list[dict[str, Any]]
 
     # --- group_inventory: löschen + verschmolzen neu einfügen ---
     grp_rows = conn.execute(
-        "SELECT id, group_id, item_id, quantity, acquired_tick FROM group_inventory;"
+        "SELECT id, group_id, item_id, quantity, quality, acquired_tick FROM group_inventory;"
     ).fetchall()
     merged: dict[tuple[int, str, float], list[float]] = {}  # -> [quantity, min_acquired]
     for row in grp_rows:
@@ -74,7 +94,12 @@ def apply_decay(conn: sqlite3.Connection, now_tick: int) -> list[dict[str, Any]]
         if hl is None:
             continue  # nicht verderblich -> unangetastet lassen
         conn.execute("DELETE FROM group_inventory WHERE id = ?;", (row["id"],))
-        q = quality_at(row["acquired_tick"], now_tick, hl)
+        gid = row["group_id"]
+        if gid not in group_cool:
+            gloc = provision.group_location(conn, gid)
+            group_cool[gid] = decay_world.cooling_lost_tick(seed, gloc) if gloc is not None else None
+        q = min(quality_cooled(row["acquired_tick"], now_tick, hl, group_cool[gid]),
+                row["quality"])
         if q < constants.SPOIL_THRESHOLD:
             spoiled[row["item_id"]] = spoiled.get(row["item_id"], 0.0) + row["quantity"]
             continue

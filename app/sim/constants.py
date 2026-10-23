@@ -80,6 +80,42 @@ K_WALK_KCAL_PER_KG_KM = 0.5
 # Qualität 0..1 nach Halbwertszeit. Fällt sie darunter -> Item verdirbt (Senke).
 SPOIL_THRESHOLD = 0.1
 
+# --- Infrastruktur-Verfall (Slice M2, Issue #5/#7) ----------------------
+# Zeitachse in Tagen seit Kollaps (fraktional: tick / MINUTES_PER_DAY). Werte 1 = intakt.
+# Strom (Netz): je Ort fällt er im Fenster [OFF-FALL, OFF] auf 0; OFF = MIN + Jitter*(MAX-MIN).
+INFRA_POWER_OFF_DAY_MIN = 1.0     # frühester lokaler Totalausfall
+INFRA_POWER_OFF_DAY_MAX = 3.0     # spätester: danach überall aus
+INFRA_POWER_FALL_DAYS = 0.4       # Dauer des Flackerns/Abfalls vor dem Ausfall
+# Wasserdruck: hält bis WATER_HOLD_DAY, fällt je Ort bis OFF (Jitter ersetzt Höhenlage).
+INFRA_WATER_HOLD_DAY = 1.5
+INFRA_WATER_OFF_DAY_MIN = 2.4
+INFRA_WATER_OFF_DAY_MAX = 3.0
+# Kühlung folgt Strom; unter dieser Schwelle gilt sie als ausgefallen.
+INFRA_REFRIGERATION_WARM_BELOW = 0.25
+# Leitungswasser nur auto-trinkbar, solange Wasserdruck über dieser Schwelle liegt.
+WATER_TAP_MIN = 0.2
+# Verderb ohne Kühlung: Halbwertszeit wird durch diesen Faktor geteilt (>1 = schneller).
+SPOILAGE_WARM_FACTOR = 2.5
+# Struktur / Überwucherung (lange Zeitskalen, Jitter 0.7..1.3).
+INFRA_STRUCT_HOLD_DAYS = 90
+INFRA_STRUCT_DECAY_DAYS = 3650
+INFRA_OVERGROWTH_START_DAY = 30
+INFRA_OVERGROWTH_FULL_DAYS = 730
+# Weltweite Stützpunkte (Tag, Wert), linear interpoliert; danach letzter Wert.
+INFRA_CELLULAR_POINTS = ((0.0, 0.6), (2.0, 0.55), (4.0, 0.3), (5.0, 0.02), (6.0, 0.0))
+INFRA_INTERNET_POINTS = ((0.0, 0.9), (1.0, 0.9), (2.0, 0.6), (3.0, 0.35), (4.0, 0.15),
+                         (5.0, 0.02), (30.0, 0.02), (60.0, 0.0))
+# Globale Phasen-Labels: (Tag-Obergrenze exklusiv, Label)
+INFRA_PHASES = (
+    (1.0, "Alles läuft noch"),
+    (2.0, "Netze wackeln"),
+    (3.5, "Strom fällt"),
+    (5.0, "Das Netz stirbt"),
+    (30.0, "Stille"),
+    (365.0, "Verwaisung"),
+    (float("inf"), "Verwilderung"),
+)
+
 # --- Capabilities -------------------------------------------------------
 # Chance pro Tag, dass ein aktiver SSID-Beacon einen Funk-Kontakt erzeugt.
 BEACON_CONTACT_PER_DAY = 0.5

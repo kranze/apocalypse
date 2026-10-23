@@ -85,6 +85,19 @@ CREATE TABLE location_inventory (
 );
 CREATE INDEX idx_loc_inv_location ON location_inventory(location_id);
 
+-- Infrastruktur-Zustand je Ort (Verfall-Simulator, Issue #5). 1.0 = intakt,
+-- 0.0 = tot; overgrowth umgekehrt (0 = keine, 1 = überwuchert). Rein abgeleitet
+-- aus (Tick, world_seed, location_id); KEIN Ledger-Gut. Zeilen entstehen lazy.
+CREATE TABLE location_infra (
+    location_id     INTEGER PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,
+    power           REAL NOT NULL DEFAULT 1.0,
+    water           REAL NOT NULL DEFAULT 1.0,
+    refrigeration   REAL NOT NULL DEFAULT 1.0,
+    structural      REAL NOT NULL DEFAULT 1.0,
+    overgrowth      REAL NOT NULL DEFAULT 0.0,
+    updated_tick    INTEGER NOT NULL DEFAULT 0
+);
+
 -- ---------------------------------------------------------------------------
 -- GRUPPEN (Schritt 1: nur die Spieler-Gruppe; später NPC-Gruppen)
 -- ---------------------------------------------------------------------------
