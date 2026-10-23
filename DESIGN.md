@@ -125,8 +125,11 @@ Senken: Verbrauch, Verderb, Verlust.
   später Minister.
 
 ### Modellwahl
-- Routine-Ticks: Haiku 4.5 (günstig, hat in Tests überzeugend Charakter gehalten)
-- Komplexe Adjudikation, Spieler-Dialog, Konsistenz-Audits, Backstory: Opus 4.8
+- Routine-Ticks: Haiku 5.5 (günstig, hält Charakter)
+- Adjudikation (Tool-Use-Schleife) und Spieler-Dialog: Sonnet 5.5
+- Backstory bei Promotion, Konsistenz-Audits, Epilog: Opus 5.5
+- Bei den heutigen Preisen begrenzt eher die Konsistenz des Gedächtnisses die
+  Zahl voller Agenten als das Budget.
 - LLM hinter Abstraktionsschicht → Backend (API/lokal) tauschbar.
 
 ---
@@ -214,8 +217,8 @@ Kein separates Spiel, sondern emergente Antwort auf Skalierung großer Gruppen.
   Tauri-Wrapper optional später.
 - Backend: Python + FastAPI.
 - State: SQLite.
-- LLM: Claude API (Haiku 4.5 Masse, Opus 4.8 für Anspruchsvolles), hinter
-  Abstraktionsschicht. Lokales LLM (4070-tauglich, ~8B) nur für robuste
+- LLM: Claude API (Haiku 5.5 Masse, Sonnet 5.5 Adjudikation/Dialog, Opus 5.5
+  für Anspruchsvolles), hinter Abstraktionsschicht. Lokales LLM (4070-tauglich, ~8B) nur für robuste
   Teilaufgaben sinnvoll; qualitativ klar unter Haiku.
 
 ---
@@ -238,8 +241,8 @@ Kein separates Spiel, sondern emergente Antwort auf Skalierung großer Gruppen.
 
 0. **Design festhalten** (dieses Dokument) ✓
 1. **Deterministischer Sim-Kern** (kein LLM): Zeit, Bedürfnisse, ein OSM-Viertel,
-   3–4 Gebäude mit Lazy-Inventar, Hunger-Achse. Voll testbar, billig.
-2. **Adjudikator-Schleife**: die riskanteste Komponente. Spieler-Intention →
+   3–4 Gebäude mit Lazy-Inventar, Hunger-Achse. Voll testbar, billig. ✓
+2. **Adjudikator-Schleife** (erste Version umgesetzt; v2 im Vertical Slice): die riskanteste Komponente. Spieler-Intention →
    strukturierter Output → World-State-Delta. Hier zeigt sich, ob das Konzept
    trägt.
 3. **Companion** (ein Agent, z.B. Klaus): Tick-Loop, Memory, Wissens-Limitierung.
@@ -250,3 +253,8 @@ Kein separates Spiel, sondern emergente Antwort auf Skalierung großer Gruppen.
 **Validierungs-Gate nach Schritt 2:** Fühlt sich die Adjudikator-Schleife
 konsistent und gut an? Wenn nein, ist das Kernkonzept in Frage gestellt, bevor
 viel Zeit investiert wurde.
+
+**Aktuell:** Dieses Gate wird über den **Vertical Slice „Die erste Woche"**
+geprüft (`docs/SLICE_WOCHE1.md`). Er zieht Teile von Schritt 2 und 3 (Adjudikator
+v2, ein Companion) zusammen und beschränkt sich auf Phase 1. Die globale
+Überlebenden-Sim ist bis dahin eingefroren.

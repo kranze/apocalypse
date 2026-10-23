@@ -17,7 +17,7 @@ from typing import Any
 from .base import EFFECT_OPS, FEASIBILITY, LLMBackend, proposal
 from .stub import RuleBackend
 
-INTERPRET_MODEL = "claude-sonnet-4-6"
+INTERPRET_MODEL = "claude-sonnet-5-5"
 
 _SYSTEM = (
     "Du bist der Adjudikator einer realistischen Endzeit-Survival-Simulation. "

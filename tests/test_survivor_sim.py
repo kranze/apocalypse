@@ -806,6 +806,12 @@ class TestDeathModel:
 class TestTickIntegration:
     """advance_tick über Tagesgrenze → genau ein step_day."""
 
+    @pytest.fixture(autouse=True)
+    def _enable_survivor_sim(self, monkeypatch):
+        """Globalsim ist per Default aus — diese Tests prüfen sie explizit."""
+        import app.config as config
+        monkeypatch.setattr(config, "SURVIVOR_SIM_ENABLED", True)
+
     def test_one_day_boundary_triggers_one_step(self, conn, monkeypatch):
         """Ein advance_tick über eine Tagesgrenze erhöht survivor_sim_day um 1.
 

@@ -22,29 +22,42 @@ Prinzip und ist nie erlaubt.
 ## Tech-Stack
 - Backend: Python + FastAPI
 - DB: SQLite (Schema in `schema.sql`)
-- Frontend: Browser, OSM via Leaflet/MapLibre (später; nicht Teil von Schritt 1)
-- LLM: Claude API hinter Abstraktionsschicht (erst ab Schritt 2 relevant)
+- Frontend: Browser, OSM via Leaflet (`app/web/`)
+- LLM: Claude API hinter Abstraktionsschicht `app/llm/` (Claude, CLI, Stub)
 
-## AKTUELLE PHASE: Schritt 1 — deterministischer Sim-Kern, KEIN LLM
+## Stand
+Umgesetzt: deterministischer Sim-Kern (Tick, Hunger/Durst/Schlaf, Lazy-Inventar,
+Plündern, Decay, Bilanz), OSM-Laden mit Chunk-Streaming und Straßengraph, erste
+Adjudikator-Schleife mit Knowledge Base und Capabilities, prozedurale
+Überlebenden-Identität und eine globale Überlebenden-Sim mit Debug-Weltkarte.
+
+## AKTUELLE PHASE: Vertical Slice „Die erste Woche"
+Plan: `docs/SLICE_WOCHE1.md`. Meilensteine M0–M5 = Issues #44–#49 (Label
+`slice-woche1`). Ziel: ein in 60–90 Minuten spielbarer Durchlauf, der beweist,
+dass das Konzept Spaß macht — erst Tiefe, dann Breite.
+
 In Scope:
-- Ein OSM-Viertel laden, Locations als Footprint + Typ ablegen
-- Zeit-Tick (Sim-Kern), Phasen-Schleife
-- Lazy Generation: Inventar wird erst bei Entdeckung erzeugt (deterministischer
-  Seed pro Location). Vorher existieren keine Inventar-Zeilen.
-- Eine Bedürfnis-Achse: Hunger (Rest als Spalten vorbereitet, aber nicht aktiv)
-- Plündern = Transfer Location → Spieler-Gruppe (bilanzneutral)
-- Decay für Nahrung
+- Aktionsbasierte Zeit: jede Aktion kostet Spielzeit, dann rückt die Welt vor
+- Hybrid-Interaktion: Routine per Klick, Kreatives per Freitext an den Adjudikator
+- Deterministische Verfalls-Timeline (Strom, Wasser, Mobilfunk, Internet)
+- Online-Phase: Geräte mit Akku, Wissens-Downloads aus kuratiertem Katalog
+- Adjudikator v2 als Tool-Use-Schleife (jeder Vorschlag vom Sim-Kern validiert)
+- Genau ein Companion mit Dialog, Gedächtnis und eigenen Bedürfnissen
+- Tag 7: „bleiben oder gehen", Bewertung durch Sim-Kern, Epilog durch LLM
 
-NICHT in Scope (später):
-- LLM, Adjudikator, Agenten, NPCs, Companions, Civ — alles weglassen
-- Frontend-Politur — minimaler Renderer reicht
+NICHT in Scope (eingefroren bzw. später):
+- Ausbau der globalen Überlebenden-Sim (bleibt bestehen, liefert den Companion;
+  der automatische Tagesschritt ist per `config.SURVIVOR_SIM_ENABLED` bzw.
+  `WASTELAND_SURVIVOR_SIM_ENABLED` standardmäßig aus)
+- Ausbau von Debug-Weltkarte und Chunk-Streaming
+- Grid-Sicht, Kampf, Tierökologie, mehrere Companions, Phasen nach Woche 1, Civ
 
 ## Sim-Kern Phasen-Reihenfolge pro Tick (einhalten)
-1. Physik/Welt fortschreiben (Zeit, Wetter, Decay)
+1. Physik/Welt fortschreiben (Zeit, Bewegung, Wetter, Verfall)
 2. Ressourcen fortschreiben (Verbrauch, Verderb, Lagerkapazität)
 3. Biologie (Bedürfnisse, Performance, Sterbe-Check)
-4. (Schritt 2+: Agenten-Ticks)
-5. Interrupts sammeln
+4. Agenten-Ticks (Companion, ab M4)
+5. Interrupts sammeln, Bilanz-Prüfung
 Niemals Agenten/LLM parallel zur Welt-Berechnung — erst Welt fertig, dann reagieren.
 
 ## ARBEITSWEISE: Orchestrieren, nicht selbst implementieren (Pflicht)
@@ -71,7 +84,6 @@ Implementierungsarbeit wird **delegiert**:
 - Tests für den Sim-Kern: deterministisch, reproduzierbar über fixen Seed.
 
 ## Validierungs-Gate
-Schritt 1 gilt als erfolgreich, wenn man im Viertel laufen, ein Gebäude betreten,
-Inventar (lazy generiert) plündern, die Items behalten und über Zeit hungrig
-werden kann — und ein erneuter Besuch denselben (ggf. geplünderten) Zustand zeigt.
-Erst danach Schritt 2 (Adjudikator).
+Jeder Meilenstein endet spielbar. Der Slice gilt erst als Erfolg, wenn das
+Fun-Gate in `docs/SLICE_WOCHE1.md` §7 erreicht ist. Fällt es durch, wird am Kern
+nachgebessert — keine neuen Systeme in die Breite, bis es besteht.

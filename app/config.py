@@ -41,6 +41,16 @@ SCHEMA_PATH: Path = ROOT / "schema.sql"
 # Globaler Seed für alle deterministische Lazy-Generation (DESIGN.md §6).
 WORLD_SEED: int = int(_env("WORLD_SEED", "1337"))
 
+# --- Survivor-Globalsimulation -----------------------------------------
+# Der automatische Tagesschritt der globalen Survivor-Simulation (survivor_sim.step_day
+# pro überschrittenem Spieltag in advance_tick). Default AUS: Fokus liegt auf dem
+# Vertical Slice (erste Woche eines Spielers); die Globalsim ist eingefroren.
+# Explizite Debug-Endpoints (/debug/simulate-days) laufen unabhängig vom Flag.
+# Aktivieren mit WASTELAND_SURVIVOR_SIM_ENABLED=1.
+SURVIVOR_SIM_ENABLED: bool = _env("SURVIVOR_SIM_ENABLED", "0").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
 # --- Start-Viertel (Mittelpunkt + Radius) -------------------------------
 # Platzhalter-Default (Erlangen-Innenstadt). Für ein anderes Viertel
 # überschreiben, z.B. WASTELAND_CENTER_LAT / WASTELAND_CENTER_LON / WASTELAND_RADIUS_M.

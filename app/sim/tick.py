@@ -14,6 +14,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from .. import config
 from . import audit, biology, capabilities, constants, movement, provision, resources, survivor_sim
 from .events import HALTING
 
@@ -42,10 +43,18 @@ def advance_tick(
         ).fetchone()
         last_sim_day: int = world_extra["survivor_sim_day"] if world_extra["survivor_sim_day"] is not None else 0
         new_day: int = t1 // constants.MINUTES_PER_DAY
-        # Sequenziell je Tag — state-abhängig, daher kein Bulk-Sprung
-        for d in range(last_sim_day + 1, new_day + 1):
-            survivor_sim.step_day(conn, d)
-        # (survivor_sim_day wird innerhalb step_day auf d gesetzt; kein doppelter Write)
+        if config.SURVIVOR_SIM_ENABLED:
+            # Sequenziell je Tag — state-abhängig, daher kein Bulk-Sprung
+            for d in range(last_sim_day + 1, new_day + 1):
+                survivor_sim.step_day(conn, d)
+            # (survivor_sim_day wird innerhalb step_day auf d gesetzt; kein doppelter Write)
+        elif new_day > last_sim_day:
+            # Globalsim aus: step_day nicht aufrufen, aber den Tagesmarker mitführen.
+            # So löst ein späteres Einschalten keinen Nachhol-Burst über alle
+            # übersprungenen Tage aus (die Sim startet ab dem aktuellen Tag).
+            conn.execute(
+                "UPDATE world SET survivor_sim_day = ? WHERE id = 1;", (new_day,)
+            )
 
         # Capabilities: Upkeep + Folgen (z.B. SSID-Beacon-Kontakte)
         interrupts += capabilities.advance(conn, minutes, t1, seed)
