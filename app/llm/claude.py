@@ -1,10 +1,14 @@
 """Claude-Backend (Anthropic SDK) — offene Intention -> Vorschlags-Objekt.
 
-Aktiv, sobald ``ANTHROPIC_API_KEY`` gesetzt ist. Ein Modell-Aufruf je Eingabe:
-Claude versteht die freie Absicht, urteilt über Machbarkeit (zu ambitioniert ->
-``too_complex``), schlägt Effekte aus dem geschlossenen Vokabular vor und
-erzählt das Ergebnis. Der System-Prompt ist konstant (Prompt-Caching). Bei
-API-Fehlern Fallback auf den deterministischen Stub.
+Aktiv, sobald ``ANTHROPIC_API_KEY`` gesetzt ist. Adjudikator v2: echte
+Tool-Use-Schleife (``run_adjudication``) — Claude liest über Lese-Werkzeuge,
+schlägt Effekte per ``propose_*`` vor, bekommt vom Sim-Kern ok/Ablehnungsgrund
+zurück, plant ggf. um und beendet mit ``finish``. Die Werkzeug-Schemas sind
+``strict`` (garantiert schema-konforme Eingaben). Der System-Text (Prompt-Datei
++ Welt-Bibel) ist konstant -> Prompt-Caching; Veränderliches (Tag, Uhrzeit,
+Kontext) steht in der User-Nachricht. Bei API-Fehlern Fallback auf den
+deterministischen Stub (gleiches Protokoll). ``interpret`` bleibt als
+Einzelschuss-Notpfad.
 
 Eisernes Prinzip: liefert nur einen Vorschlag (Effekte + Narration) — der
 Sim-Kern validiert/führt aus und berechnet Folgen selbst.
@@ -14,11 +18,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from . import lore
 from .base import EFFECT_OPS, FEASIBILITY, LLMBackend, proposal
 from .stub import RuleBackend
 
 INTERPRET_MODEL = "claude-sonnet-5-5"
 
+# Einzelschuss-Notpfad (``interpret``); die Tool-Use-Schleife nutzt lore.system_prompt().
 _SYSTEM = (
     "Du bist der Adjudikator einer realistischen Endzeit-Survival-Simulation. "
     "Der Spieler beschreibt frei, was er tun will. Deine Aufgabe:\n"
@@ -133,10 +139,10 @@ class ClaudeBackend(LLMBackend):
             resp = self._client.messages.create(
                 model=INTERPRET_MODEL,
                 max_tokens=700,
-                system=[{"type": "text", "text": _SYSTEM,
+                system=[{"type": "text", "text": _SYSTEM + "\n\n" + lore.world_bible(),
                          "cache_control": {"type": "ephemeral"}}],
                 tools=[_TOOL],
-                tool_choice={"type": "tool", "name": _TOOL["name"]},
+                tool_choice={"type": "auto"},  # erzwungenes tool_choice: 400 auf Sonnet 5.5
                 messages=messages,
             )
             out = next((b.input for b in resp.content if b.type == "tool_use"), None)
@@ -157,6 +163,72 @@ class ClaudeBackend(LLMBackend):
             narration=out.get("narration", ""),
         )
 
+
+    # --- Tool-Use-Schleife (Adjudikator v2) -----------------------------
+    def run_adjudication(self, text, context, toolbox, max_iterations=8) -> dict[str, Any]:
+        """Mehrschritt-Schleife gegen die Toolbox des Sim-Kerns. Bei API-Fehlern
+        (nichts geschrieben, nur Staging im Speicher) -> Stub-Schleife."""
+        try:
+            return self._loop(text, context, toolbox)
+        except Exception:
+            toolbox.reset()
+            return self._fallback.run_adjudication(text, context, toolbox, max_iterations)
+
+    def _loop(self, text, context, toolbox) -> dict[str, Any]:
+        tools = toolbox.specs()
+        system = [{"type": "text", "text": lore.system_prompt(),
+                   "cache_control": {"type": "ephemeral"}}]
+        messages = _history_messages(context)
+        user_msg = (
+            f"Spieler-Eingabe: {text!r}\n\nKontext (nur reale Optionen):\n"
+            + json.dumps(_compact(context), ensure_ascii=False)
+        )
+        if messages and messages[-1]["role"] == "user":
+            messages[-1] = {"role": "user",
+                            "content": messages[-1]["content"] + "\n\n" + user_msg}
+        else:
+            messages.append({"role": "user", "content": user_msg})
+
+        while toolbox.begin_turn():
+            resp = self._client.messages.create(
+                model=INTERPRET_MODEL, max_tokens=4096, system=system, tools=tools,
+                tool_choice={"type": "auto"},  # forced tool_choice: 400 auf Sonnet 5.5
+                output_config={"effort": "medium"},
+                messages=messages,
+            )
+            if resp.stop_reason in ("refusal", "max_tokens"):
+                raise RuntimeError(f"adjudication stopped: {resp.stop_reason}")
+            # Antwort UNVERÄNDERT zurückgeben (Thinking-Blöcke bleiben gültig).
+            messages.append({"role": "assistant", "content": resp.content})
+            uses = [b for b in resp.content if b.type == "tool_use"]
+            if not uses:
+                # Nur Text, kein finish: Text als Narration übernehmen.
+                narr = " ".join(b.text for b in resp.content if b.type == "text").strip()
+                toolbox.call("finish", {"understanding": "", "feasibility": "feasible",
+                                        "reason": "", "narration": narr})
+                return {"stop": "finish"}
+            others = [b for b in uses if b.name != "finish"]
+            results = []
+            for b in others:
+                results.append({"type": "tool_result", "tool_use_id": b.id,
+                                "content": json.dumps(toolbox.call(b.name, dict(b.input)),
+                                                      ensure_ascii=False)})
+            for b in uses:
+                if b.name != "finish":
+                    continue
+                if others:  # finish muss allein stehen: erst Ergebnisse sehen lassen
+                    results.append({"type": "tool_result", "tool_use_id": b.id,
+                                    "is_error": True,
+                                    "content": json.dumps({"ok": False,
+                                                           "reason": "finish_must_be_alone"})})
+                else:
+                    results.append({"type": "tool_result", "tool_use_id": b.id,
+                                    "content": json.dumps(toolbox.call("finish", dict(b.input)),
+                                                          ensure_ascii=False)})
+            if toolbox.finished is not None:
+                return {"stop": "finish"}
+            messages.append({"role": "user", "content": results})
+        return {"stop": "limit"}
 
     def narrate_location(self, location, profile=None, history=None) -> str:
         sys = (
@@ -207,7 +279,7 @@ class ClaudeBackend(LLMBackend):
                 model=INTERPRET_MODEL, max_tokens=400,
                 system=[{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}],
                 tools=[_MATCH_TOOL],
-                tool_choice={"type": "tool", "name": _MATCH_TOOL["name"]},
+                tool_choice={"type": "auto"},  # erzwungenes tool_choice: 400 auf Sonnet 5.5
                 messages=[{"role": "user", "content": user}],
             )
             out = next((b.input for b in resp.content if b.type == "tool_use"), None)
@@ -233,6 +305,32 @@ _MATCH_TOOL = {
 }
 
 
+def _history_messages(context: dict[str, Any]) -> list[dict]:
+    """Gesprächsverlauf als alternierende messages (player -> user, narrator ->
+    assistant, system -> user-Notiz); gleiche Rollen in Folge werden verschmolzen."""
+    out: list[dict] = []
+    for turn in (context.get("history") or []):
+        t = turn.get("text", "")
+        if not t:
+            continue
+        role = turn.get("role", "")
+        if role == "player":
+            msg = {"role": "user", "content": t}
+        elif role == "narrator":
+            msg = {"role": "assistant", "content": t}
+        elif role == "system":
+            msg = {"role": "user", "content": f"[System: {t}]"}
+        else:
+            continue
+        if out and out[-1]["role"] == msg["role"]:
+            out[-1] = {"role": msg["role"], "content": out[-1]["content"] + "\n" + t}
+        else:
+            out.append(msg)
+    while out and out[0]["role"] != "user":  # API: erste Nachricht muss user sein
+        out.pop(0)
+    return out
+
+
 def _history_compact(history: list[dict] | None) -> str:
     """Kompakte Zusammenfassung der Chat-History für User-Blöcke (search/narrate).
 
@@ -249,9 +347,11 @@ def _history_compact(history: list[dict] | None) -> str:
 
 def _compact(context: dict[str, Any]) -> dict[str, Any]:
     return {
+        "world_state": context.get("world_state"),
         "locations": [
-            {"type": l.get("type"), "name": l.get("name"), "dist_m": l.get("dist_m"),
-             "status": l.get("discovery_status")}
+            {"id": l.get("id"), "type": l.get("type"), "name": l.get("name"),
+             "dist_m": l.get("dist_m"), "status": l.get("discovery_status"),
+             "searched": l.get("searched")}
             for l in context.get("locations", [])[:20]
         ],
         "inventory": [

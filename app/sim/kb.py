@@ -76,3 +76,23 @@ def _decode(value: str | None) -> Any:
         return json.loads(value)
     except (ValueError, TypeError):
         return value
+
+
+# Code-definierte, kuratierte Grundfakten für Effekte des Adjudikators v2, die
+# nicht im DB-Seed stehen (``barricade``: Capability-Rezept + Materiallieferanten).
+_DEFAULT_FACTS: tuple[tuple[str, str, str], ...] = (
+    ("capability_recipe:barricade", "barricade", '{"requires": ["barricade_material"]}'),
+    ("provides:barricade_material", "rope", '{"consume": 2}'),
+    ("provides:barricade_material", "duct_tape", '{"consume": 3}'),
+)
+
+
+def seed_defaults(conn: sqlite3.Connection) -> None:
+    """Idempotent (INSERT OR IGNORE, nie Überschreiben): legt die oben
+    definierten kuratierten Fakten an. Läuft in der Transaktion des Aufrufers."""
+    for topic, key, value in _DEFAULT_FACTS:
+        conn.execute(
+            "INSERT OR IGNORE INTO knowledge_base (topic, key, value, provenance, "
+            "created_tick) VALUES (?, ?, ?, 'curated', 0);",
+            (topic, key, value),
+        )

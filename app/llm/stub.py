@@ -1,7 +1,10 @@
 """Deterministischer Regel-Stub (kein Netz, kein Key).
 
 Grobe Keyword-Heuristik, die eine offene Eingabe auf einen Effekt + ein
-Machbarkeitsurteil abbildet. Bewusst simpel — die sprachliche/urteilende Tiefe
+Machbarkeitsurteil abbildet. ``run_adjudication`` spielt dasselbe Protokoll wie
+das Claude-Backend (Werkzeug-Aufrufe gegen die Toolbox, Ablehnung -> Umplanen),
+nur regelbasiert: z.B. ``prepare`` scheitert an ``no_water`` -> ``fill_water``,
+dann ``prepare`` erneut. Bewusst simpel — die sprachliche/urteilende Tiefe
 liefert das Claude-Backend. Format identisch zu ClaudeBackend, damit der
 Adjudikator backend-agnostisch bleibt. Für Tests deterministisch.
 """
@@ -22,6 +25,9 @@ _LOCATION_SYNONYMS: dict[str, str] = {
 _RULES: list[tuple[str, tuple[str, ...]]] = [
     ("too_complex", ("mobilfunk", "handynetz", "netz wieder", "netz reaktiv",
                      "internet wieder", "ganze stadt", "alle masten")),
+    ("fill_water", ("abfüll", "abfuell", "fülle", "fuelle", "zapf")),
+    ("leave_note", ("zettel", "notiz", "nachricht hinterlass", "hinterlasse", "hinterlass")),
+    ("barricade", ("barrikad", "verrammel")),
     ("establish_capability", ("ssid", "beacon", "funksignal", "signal senden",
                               "sende ein", "antenne", "funkmast", "über den mast",
                               "ueber den mast", "leuchtturm")),
@@ -68,6 +74,20 @@ _ITEM_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _note_text(text: str) -> str:
+    """Notiztext: Zitat in Anführungszeichen, sonst Teil nach dem Doppelpunkt,
+    sonst die ganze Eingabe."""
+    for q in ('"', "„", "'"):
+        a = text.find(q)
+        if a != -1:
+            b = text.find("“" if q == "„" else q, a + 1)
+            if b > a + 1:
+                return text[a + 1:b].strip()
+    if ":" in text:
+        return text.split(":", 1)[1].strip() or text.strip()
+    return text.strip()
+
+
 def _words(text: str) -> list[str]:
     return "".join(ch if ch.isalnum() else " " for ch in text.lower()).split()
 
@@ -99,6 +119,14 @@ class RuleBackend(LLMBackend):
             return proposal(effects=[{"op": "consume_food"}], narration="Du isst etwas.")
         if match == "prepare":
             return proposal(effects=[{"op": "prepare"}], narration="Du bereitest etwas zu.")
+        if match == "fill_water":
+            return proposal(effects=[{"op": "fill_water"}], narration="Du füllst Wasser ab.")
+        if match == "barricade":
+            return proposal(effects=[{"op": "barricade"}],
+                            narration="Du verbarrikadierst den Ort.")
+        if match == "leave_note":
+            return proposal(effects=[{"op": "leave_note", "text": _note_text(text)}],
+                            narration="Du hinterlässt eine Nachricht.")
         if match == "search":
             return proposal(effects=[{"op": "search", "query": text}],
                             narration="Du durchsuchst die Umgebung.")
@@ -114,6 +142,29 @@ class RuleBackend(LLMBackend):
         target = self._target(t, context)
         return proposal(effects=[{"op": match, "target": target}],
                         narration="Du machst dich daran.")
+
+    def run_adjudication(self, text, context, toolbox, max_iterations=8) -> dict[str, Any]:
+        """Deterministische Tool-Use-Schleife (Regeln statt Modell)."""
+        toolbox.allow_partial = True
+        if not toolbox.begin_turn():
+            return {"stop": "limit"}
+        p = self.interpret(text, context)
+        for eff in p.get("effects") or []:
+            op = eff["op"]
+            args = {k: v for k, v in eff.items() if k != "op"}
+            res = toolbox.call("propose_" + op, args)
+            # Umplanen: Zubereitung ohne Wasser -> erst Wasser abfüllen, dann erneut.
+            if (not res.get("ok") and op == "prepare" and res.get("reason") == "no_water"
+                    and toolbox.begin_turn()):
+                if toolbox.call("propose_fill_water", {}).get("ok") and toolbox.begin_turn():
+                    toolbox.call("propose_prepare", args)
+        toolbox.call("finish", {
+            "understanding": p.get("understanding", ""),
+            "feasibility": p.get("feasibility", "feasible"),
+            "reason": p.get("reason", ""),
+            "narration": p.get("narration", ""),
+        })
+        return {"stop": "finish"}
 
     def narrate_location(self, location, profile=None, history=None) -> str:
         name = location.get("name") or location.get("label") or location.get("type") or "ein Ort"

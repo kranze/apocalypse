@@ -5,6 +5,9 @@ Antwort. Praktisch, um ohne ``ANTHROPIC_API_KEY`` über das Claude-Abo zu spiele
 Langsamer als die API und ohne erzwungenes Tool-Use → wir bitten um reines JSON
 und extrahieren es robust; bei Fehlern Fallback auf den deterministischen Stub.
 
+Adjudikator v2: ``run_adjudication`` emuliert die Tool-Use-Schleife per
+JSON-Rundenprotokoll (siehe dort); unbrauchbare Antworten -> Stub-Schleife.
+
 Eisernes Prinzip unverändert: liefert nur Vorschläge/Urteile als dict — der
 Sim-Kern validiert/klemmt und schreibt.
 """
@@ -16,6 +19,7 @@ import shutil
 import subprocess
 from typing import Any
 
+from . import lore
 from .base import EFFECT_OPS, FEASIBILITY, LLMBackend, proposal
 from .stub import RuleBackend
 
@@ -104,6 +108,66 @@ class CliBackend(LLMBackend):
             narration=out.get("narration", ""),
         )
 
+    # --- Tool-Use-Schleife (Adjudikator v2): JSON-Rundenprotokoll -------------
+    # Die CLI kennt kein natives Tool-Use. Emulation: pro Runde ein frischer
+    # ``claude -p``-Aufruf mit Werkzeugliste + bisherigem Protokoll; das Modell
+    # antwortet mit {"calls": [{"tool": name, "input": {...}}, ...]}. Jeder Call
+    # läuft gegen dieselbe Toolbox (gleiche gestagte Validierung, Ablehnung geht
+    # im nächsten Rundenprompt zurück). Kein erzwungenes Schema -> die Toolbox
+    # prüft/normalisiert alles; unbrauchbare Antwort -> Stub-Schleife.
+    def run_adjudication(self, text, context, toolbox, max_iterations=8) -> dict[str, Any]:
+        try:
+            return self._loop(text, context, toolbox)
+        except Exception:
+            toolbox.reset()
+            return self._fallback.run_adjudication(text, context, toolbox, max_iterations)
+
+    def _loop(self, text, context, toolbox) -> dict[str, Any]:
+        tool_lines = "\n".join(
+            f"- {s['name']}: {s['description']} Eingabe: "
+            f"{json.dumps(list(s['input_schema']['properties']), ensure_ascii=False)}"
+            for s in toolbox.specs()
+        )
+        header = (
+            lore.system_prompt()
+            + "\n\n# Protokoll (CLI)\nDu hast keine echten Werkzeuge, sondern antwortest je Runde "
+            "AUSSCHLIESSLICH mit einem JSON-Objekt {\"calls\": [{\"tool\": str, \"input\": "
+            "object}, ...]}. Die Ergebnisse siehst du in der nächsten Runde. `finish` "
+            "gehört allein in eine eigene Runde. Optionale Felder: null oder weglassen. "
+            "transfer.items = [{\"item\": str, \"qty\": number}].\n\n# Werkzeuge\n"
+            + tool_lines
+            + f"\n\nEingabe: {text!r}\nKontext: "
+            + json.dumps(_compact(context), ensure_ascii=False)
+        )
+        history_block = _history_compact(context.get("history"))
+        if history_block:
+            header += "\n\n" + history_block
+        transcript: list[dict[str, Any]] = []
+        while toolbox.begin_turn():
+            prompt = header
+            if transcript:
+                prompt += "\n\n# Bisheriger Verlauf dieser Adjudikation\n" + json.dumps(
+                    transcript, ensure_ascii=False)
+            out = self._json(prompt)
+            calls = out.get("calls") if isinstance(out, dict) else None
+            if not isinstance(calls, list) or not calls:
+                raise RuntimeError("unbrauchbare CLI-Antwort")
+            others = [c for c in calls if isinstance(c, dict) and c.get("tool") != "finish"]
+            round_log = []
+            for c in others[:8]:
+                res = toolbox.call(str(c.get("tool")), c.get("input") or {})
+                round_log.append({"tool": c.get("tool"), "input": c.get("input"), "result": res})
+            fin = next((c for c in calls if isinstance(c, dict) and c.get("tool") == "finish"), None)
+            if fin is not None:
+                if others:
+                    round_log.append({"tool": "finish",
+                                      "result": {"ok": False, "reason": "finish_must_be_alone"}})
+                else:
+                    toolbox.call("finish", fin.get("input") or {})
+                    return {"stop": "finish"}
+            transcript.append({"round": len(transcript) + 1, "calls": round_log})
+        return {"stop": "limit"}
+
     # --- match_items ---------------------------------------------------
     def match_items(self, query, location, candidates, profile=None, history=None) -> dict[str, Any]:
         history_block = _history_compact(history)
@@ -155,8 +219,10 @@ def _history_compact(history: list[dict] | None) -> str:
 
 def _compact(context: dict[str, Any]) -> dict[str, Any]:
     return {
+        "world_state": context.get("world_state"),
         "locations": [
-            {"type": l.get("type"), "name": l.get("name"), "dist_m": l.get("dist_m")}
+            {"id": l.get("id"), "type": l.get("type"), "name": l.get("name"),
+             "dist_m": l.get("dist_m"), "searched": l.get("searched")}
             for l in context.get("locations", [])[:15]
         ],
         "inventory": [i.get("item_id") for i in context.get("inventory", [])],

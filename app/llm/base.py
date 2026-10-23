@@ -5,7 +5,15 @@
 (aus dem geschlossenen Ausführungs-Vokabular) und Narration. Das LLM *schlägt
 vor*; der Sim-Kern validiert jeden Effekt hart und führt ihn aus.
 
-Proposal-Format:
+Adjudikator v2: ``run_adjudication`` treibt eine Tool-Use-Schleife gegen eine
+**Toolbox** (vom Sim-Kern bereitgestellt; hier nur als Duck-Type benutzt):
+``begin_turn() -> bool`` (False = Iterationslimit), ``call(name, args) -> dict``
+(führt Lese-/Vorschlags-Werkzeug aus; Vorschläge werden dort sofort validiert
+und ggf. mit Grund abgelehnt, geschrieben wird nichts), ``specs()`` (Werkzeuge),
+``finished`` (Ergebnis von ``finish`` oder None), ``allow_partial`` (Attribut),
+``reset()``. Das Backend schreibt NIE selbst — es ruft nur Werkzeuge.
+
+Proposal-Format (Einzelschuss ``interpret``):
 { understanding: str, feasibility: 'feasible'|'risky'|'too_complex'|'impossible',
   reason: str, effects: [ {op, ...params} ], narration: str }
 """
@@ -17,6 +25,7 @@ from typing import Any
 EFFECT_OPS = (
     "move_to", "discover", "transfer", "consume_food", "prepare", "search",
     "advance_time", "transform", "establish_capability", "narrate",
+    "fill_water", "barricade", "leave_note",
 )
 
 FEASIBILITY = ("feasible", "risky", "too_complex", "impossible")
@@ -27,6 +36,14 @@ class LLMBackend:
 
     def interpret(self, text: str, context: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
+
+    def run_adjudication(
+        self, text: str, context: dict[str, Any], toolbox: Any, max_iterations: int = 8
+    ) -> dict[str, Any]:
+        """Tool-Use-Schleife gegen ``toolbox``. Standard: Einzelschuss über
+        ``interpret`` (siehe ``single_shot_adjudication``) — Backends mit echtem
+        Tool-Use überschreiben das. Liefert {"stop": "finish"|"limit"|"error"}."""
+        return single_shot_adjudication(self, text, context, toolbox)
 
     def narrate_location(
         self,
@@ -66,3 +83,29 @@ def proposal(
         "effects": effects or [],
         "narration": narration,
     }
+
+
+def single_shot_adjudication(
+    backend: Any, text: str, context: dict[str, Any], toolbox: Any
+) -> dict[str, Any]:
+    """Degradierter Pfad ohne Mehrschritt-Schleife: ``backend.interpret`` liefert
+    einmal ein komplettes Proposal; jeder Effekt läuft trotzdem als Vorschlag
+    durch die gestagte Validierung der Toolbox, danach ``finish``. Eine einzige
+    Ablehnung verwirft den ganzen Plan (kein Umplanen -> ``allow_partial=False``).
+    Gilt auch für Backends, die nur ``interpret`` kennen (Duck-Typing)."""
+    toolbox.allow_partial = False
+    if not toolbox.begin_turn():
+        return {"stop": "limit"}
+    p = backend.interpret(text, context)
+    for eff in p.get("effects") or []:
+        if not isinstance(eff, dict) or eff.get("op") not in EFFECT_OPS:
+            continue
+        args = {k: v for k, v in eff.items() if k != "op"}
+        toolbox.call("propose_" + eff["op"], args)
+    toolbox.call("finish", {
+        "understanding": p.get("understanding", ""),
+        "feasibility": p.get("feasibility", "feasible"),
+        "reason": p.get("reason", ""),
+        "narration": p.get("narration", ""),
+    })
+    return {"stop": "finish"}
