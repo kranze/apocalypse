@@ -174,7 +174,7 @@ def test_seven_days_survivable_with_click_actions_only():
     steps = 0
     while actions.world_clock(conn)["day"] < constants.DAYS_TOTAL:
         a = _click_policy(conn)
-        payload = {k: v for k, v in a.items() if k not in ("label", "minutes")}
+        payload = {k: v for k, v in a.items() if k not in ("label", "minutes", "options")}
         r = actions.perform(conn, 1, payload)
         steps += 1
         assert steps < 2000, "Endlosschleife in der Klick-Policy"

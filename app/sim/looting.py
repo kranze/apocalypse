@@ -13,7 +13,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from . import generation
+from . import constants, generation
 from .events import emit_event
 
 
@@ -54,11 +54,17 @@ def loot(
         ).fetchall()
 
         transferred: dict[str, float] = {}
+        budget = None if items is None else dict(items)  # je Item über Stapel hinweg
         for row in inv:
-            requested = row["quantity"] if items is None else items.get(row["item_id"], 0.0)
+            if budget is None:
+                requested = row["quantity"]
+            else:
+                requested = budget.get(row["item_id"], 0.0)
             take = min(row["quantity"], max(0.0, requested))
             if take <= 0:
                 continue
+            if budget is not None:
+                budget[row["item_id"]] = requested - take
 
             # Location verringern (bzw. Zeile entfernen, wenn leer).
             remaining = row["quantity"] - take
@@ -103,3 +109,101 @@ def loot(
         )
 
     return {"ok": True, "transferred": transferred, "status": new_status}
+
+
+# --- Tragegrenze --------------------------------------------------------
+def carry_capacity(conn: sqlite3.Connection, group_id: int) -> float:
+    """Tragekapazität der Gruppe in kg: Summe über lebende Mitglieder von
+    clamp(CARRY_BODY_FRACTION * Körpergewicht, CARRY_MIN_KG, CARRY_MAX_KG)."""
+    total = 0.0
+    for r in conn.execute(
+        "SELECT weight_kg FROM characters WHERE group_id = ? AND is_alive = 1;",
+        (group_id,),
+    ).fetchall():
+        body = r["weight_kg"] or constants.CARRY_DEFAULT_BODY_KG
+        total += max(
+            constants.CARRY_MIN_KG,
+            min(constants.CARRY_MAX_KG, constants.CARRY_BODY_FRACTION * body),
+        )
+    return total
+
+
+def _priority(category: str, needs_prep: int) -> int:
+    """Plünder-Priorität: Wasser > fertiges Essen > Essen mit Zubereitung >
+    Medizin > Werkzeug > Rest."""
+    if category == "water":
+        return 0
+    if category == "food":
+        return 2 if needs_prep else 1
+    if category == "medical":
+        return 3
+    if category == "tool":
+        return 4
+    return 5
+
+
+def plan_loot(
+    conn: sqlite3.Connection, location_id: int, free_kg: float
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Wählt deterministisch, was bis ``free_kg`` mitgenommen wird.
+
+    Rückgabe ``(take, left)`` als {item_id: menge}. Es werden nur ganze
+    Einheiten genommen (Brüche nur, wenn die ganze Restmenge passt);
+    gewichtslose Items passen immer.
+    """
+    rows = conn.execute(
+        "SELECT li.item_id, SUM(li.quantity) AS qty, ic.weight_kg AS w, "
+        "ic.category AS cat, ic.needs_preparation AS np, "
+        "COALESCE(ic.kcal_per_unit, 0.0) AS kcal "
+        "FROM location_inventory li JOIN item_catalog ic ON ic.id = li.item_id "
+        "WHERE li.location_id = ? AND li.quantity > 0 GROUP BY li.item_id;",
+        (location_id,),
+    ).fetchall()
+    ordered = sorted(
+        rows,
+        key=lambda r: (
+            _priority(r["cat"], r["np"]),
+            -(r["kcal"] / r["w"]) if r["cat"] == "food" and r["w"] else 0.0,
+            r["item_id"],
+        ),
+    )
+    take: dict[str, float] = {}
+    left: dict[str, float] = {}
+    free = max(0.0, free_kg)
+    for r in ordered:
+        qty, w = r["qty"], r["w"] or 0.0
+        if w <= 0:
+            n = qty
+        elif qty * w <= free + 1e-9:
+            n = qty
+        else:
+            n = float(int((free + 1e-9) // w))
+        if n > 0:
+            take[r["item_id"]] = n
+            free -= n * w
+        if qty - n > 1e-9:
+            left[r["item_id"]] = qty - n
+    return take, left
+
+
+def loot_limited(
+    conn: sqlite3.Connection, location_id: int, group_id: int = 1
+) -> dict[str, Any]:
+    """Plündern bis zur Tragegrenze (Priorität siehe ``plan_loot``). Der Rest
+    bleibt am Ort. Ergebnis wie ``loot`` plus ``left``, ``carried_kg``,
+    ``capacity_kg``; ``reason='too_heavy'`` wenn gar nichts mehr passt."""
+    from . import movement
+
+    capacity = carry_capacity(conn, group_id)
+    carried = movement.carried_weight(conn, group_id)
+    take, left = plan_loot(conn, location_id, capacity - carried)
+    if not take:
+        return {"ok": False, "reason": "too_heavy", "left": left,
+                "carried_kg": round(carried, 2), "capacity_kg": round(capacity, 2)}
+    res = loot(conn, location_id, group_id, items=take)
+    if not res.get("ok"):
+        return res
+    res["left"] = left
+    res["carried_kg"] = round(movement.carried_weight(conn, group_id), 2)
+    res["capacity_kg"] = round(capacity, 2)
+    return res

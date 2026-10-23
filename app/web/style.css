@@ -212,3 +212,9 @@ button:disabled { opacity: .4; cursor: default; }
   border: 1px solid var(--border);
   pointer-events: none;
 }
+
+/* Tragelast im Rucksack-Kopf, Essen/Zubereiten mit Auswahlmenü */
+#carry.full { color: var(--danger, #e57373); }
+.actionbar .split { display: inline-flex; gap: 1px; }
+.actionbar .split button { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.actionbar .split select.pick { width: 22px; padding: 0; font-size: 12px; border-top-left-radius: 0; border-bottom-left-radius: 0; }

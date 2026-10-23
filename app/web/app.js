@@ -145,6 +145,14 @@ async function refreshState() {
 
 async function refreshInventory() {
   const inv = await getJSON(`/groups/${PLAYER_ID}/inventory`);
+  try {
+    const c = await getJSON(`/groups/${PLAYER_GROUP}/carry`);
+    const el = document.getElementById("carry");
+    if (el) {
+      el.textContent = `${(+c.carried_kg).toFixed(1)} / ${(+c.capacity_kg).toFixed(0)} kg`;
+      el.classList.toggle("full", c.carried_kg >= c.capacity_kg - 0.5);
+    }
+  } catch (e) { /* Tragelast-Anzeige nicht kritisch */ }
   const ul = document.getElementById("inventory");
   ul.innerHTML = "";
   if (!inv.length) {
@@ -153,7 +161,7 @@ async function refreshInventory() {
   }
   for (const it of inv) {
     const li = document.createElement("li");
-    li.innerHTML = `<span>${it.item_id}</span><span>${(+it.quantity).toFixed(0)} · q${(+it.quality).toFixed(2)}</span>`;
+    li.innerHTML = `<span>${it.name || it.item_id}</span><span>${(+it.quantity).toFixed(0)} · q${(+it.quality).toFixed(2)}</span>`;
     ul.appendChild(li);
   }
 }
@@ -417,7 +425,7 @@ function renderPanelInv(items) {
   }
   for (const it of items) {
     const li = document.createElement("li");
-    li.innerHTML = `<span>${it.item_id}</span><span>${(+it.quantity).toFixed(0)} · q${(+it.quality).toFixed(2)}</span>`;
+    li.innerHTML = `<span>${it.name || it.item_id}</span><span>${(+it.quantity).toFixed(0)} · q${(+it.quality).toFixed(2)}</span>`;
     inv.appendChild(li);
   }
 }
@@ -525,7 +533,7 @@ async function refreshDiscoveredMarkers() {
 // Aktions-UI sperren/entsperren, solange eine Aktion läuft.
 function setActionBusy(busy) {
   actionBusy = busy;
-  const sel = "#actionbar button, #panel-actions button, #btn-cmd, #cmd";
+  const sel = "#actionbar button, #actionbar select, #panel-actions button, #btn-cmd, #cmd";
   for (const el of document.querySelectorAll(sel)) el.disabled = busy;
 }
 
@@ -548,10 +556,36 @@ async function loadActionBar() {
       }
       b.disabled = actionBusy;
       b.onclick = () => {
-        const { label, minutes, ...payload } = a; // kind + Parameter zurücksenden
-        doAction(payload);
+        const { label, minutes, options, ...payload } = a; // kind + Parameter zurücksenden
+        doAction(payload); // ohne item_id wählt der Sim-Kern das beste Item
       };
-      bar.appendChild(b);
+      if (a.options && a.options.length > 1) {
+        // Essen/Zubereiten: Hauptknopf = bestes Item, kleines Menü = konkretes Item.
+        const wrap = document.createElement("span");
+        wrap.className = "split";
+        const menu = document.createElement("select");
+        menu.className = "pick";
+        menu.title = "Bestimmtes Item wählen";
+        menu.disabled = actionBusy;
+        const ph = document.createElement("option");
+        ph.value = ""; ph.textContent = "▾";
+        menu.appendChild(ph);
+        for (const o of a.options) {
+          const opt = document.createElement("option");
+          opt.value = o.item_id;
+          opt.textContent = `${o.name} (${(+o.quantity).toFixed(0)})`;
+          menu.appendChild(opt);
+        }
+        menu.onchange = () => {
+          if (!menu.value) return;
+          doAction({ kind: a.kind, item_id: menu.value });
+        };
+        wrap.appendChild(b);
+        wrap.appendChild(menu);
+        bar.appendChild(wrap);
+      } else {
+        bar.appendChild(b);
+      }
     }
   } catch (e) { /* Leiste nicht kritisch */ }
 }

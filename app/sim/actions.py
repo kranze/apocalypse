@@ -27,6 +27,7 @@ from . import (
     heat,
     looting,
     movement,
+    provision,
     resources,
     tick,
 )
@@ -224,6 +225,82 @@ _SIM_HINTS = {
 }
 
 
+# --- Erzähltext (deterministisch, aus den Ergebnisdaten; kein LLM) --------
+def _item_names(conn) -> dict[str, str]:
+    return dict(conn.execute("SELECT id, name FROM item_catalog;").fetchall())
+
+
+def _listing(names: dict[str, str], items: dict[str, float]) -> str:
+    return ", ".join(f"{q:g}x {names.get(i, i)}" for i, q in items.items())
+
+
+def _duration(minutes: int) -> str:
+    h, m = divmod(int(minutes), 60)
+    if h and m:
+        return f"{h} Std. {m} min"
+    return f"{h} Std." if h else f"{m} min"
+
+
+def _place_name(conn, location_id) -> str | None:
+    if location_id is None:
+        return None
+    r = conn.execute(
+        "SELECT name, label, type FROM locations WHERE id = ?;", (location_id,)
+    ).fetchone()
+    return (r["name"] or r["label"] or r["type"]) if r else None
+
+
+def _narrate_loot(conn, result: dict) -> str:
+    names = _item_names(conn)
+    took = result.get("transferred") or {}
+    left = result.get("left") or {}
+    text = f"Du packst {_listing(names, took)} ein." if took else "Du nimmst nichts mit."
+    if left:
+        text += f" Mehr kannst du nicht tragen, {_listing(names, left)} lässt du zurück."
+    else:
+        text += " Hier ist nichts mehr übrig."
+    return text
+
+
+def _narrate_consume(conn, kind: str, result: dict) -> str:
+    names = _item_names(conn)
+    if kind == "eat":
+        return (f"Du isst {names.get(result.get('item'), result.get('item'))} "
+                f"(+{result.get('kcal', 0):.0f} kcal).")
+    return (f"Du bereitest {names.get(result.get('from'), result.get('from'))} zu "
+            f"und hast nun {names.get(result.get('prepared'), result.get('prepared'))}.")
+
+
+def _narrate_wait(minutes: int, stopped: str) -> str:
+    text = f"Du wartest {_duration(minutes)}."
+    if stopped == "interrupt":
+        text += " Etwas reißt dich aus der Ruhe."
+    return text
+
+
+def _narrate_sleep(minutes: int, stopped: str, after: float) -> str:
+    text = f"Du schläfst {_duration(minutes)}."
+    if stopped == "interrupt":
+        return text + " Du wirst unsanft geweckt."
+    if after >= constants.SLEEP_TARGET:
+        return text + " Du fühlst dich ausgeruht."
+    return text + " Richtig erholt bist du noch nicht."
+
+
+def _narrate_walk(conn, minutes: int, stopped: str, distance_m, arrived) -> str:
+    where = _place_name(conn, arrived)
+    if stopped == "arrived":
+        if not minutes:
+            return f"Du bist bereits bei {where}." if where else "Du bist bereits am Ziel."
+        tail = f" und erreichst {where}." if where else " und bist am Ziel."
+        return f"Du gehst {distance_m:.0f} m ({_duration(minutes)})" + tail
+    if stopped == "interrupt":
+        return f"Du gehst {_duration(minutes)}, dann hältst du an."
+    if stopped == "max":
+        return f"Du gehst {_duration(minutes)} und legst eine Pause ein."
+    return f"Du gehst {_duration(minutes)}."
+
+
 # --- Orts-Helfer --------------------------------------------------------
 def _location_here(conn, character_id, reach: float):
     """Nächste Location in Reichweite des Spielers (oder None)."""
@@ -325,6 +402,7 @@ def _do_walk(conn, cid, action) -> dict[str, Any]:
         return _response(
             conn, "walk", cid, stopped="arrived", path=[],
             arrived_location_id=arrived, result={"distance_m": 0.0},
+            narration=_narrate_walk(conn, 0, "arrived", 0.0, arrived),
         )
 
     dest = movement.set_destination(conn, cid, lat, lon)
@@ -340,6 +418,9 @@ def _do_walk(conn, cid, action) -> dict[str, Any]:
         conn, "walk", cid, minutes_spent=walked["spent"], stopped=walked["stopped"],
         events=walked["events"], path=dest["path"], arrived_location_id=arrived,
         result={"distance_m": dest["distance_m"]},
+        narration=_narrate_walk(
+            conn, walked["spent"], walked["stopped"], dest["distance_m"], arrived
+        ),
     )
 
 
@@ -366,14 +447,23 @@ def _do_loot(conn, cid, action) -> dict[str, Any]:
         return _reject(conn, "loot", cid, "empty", "Hier gibt es nichts mehr zu plündern.")
 
     movement.clear_destination(conn, cid)
-    result = looting.loot(conn, loc["id"], _group_id(conn, cid))
+    result = looting.loot_limited(conn, loc["id"], _group_id(conn, cid))
     if not result.get("ok"):
         reason = result.get("reason", "loot_failed")
+        if reason == "too_heavy":
+            names = _item_names(conn)
+            return _reject(
+                conn, "loot", cid, reason,
+                "Du kannst nichts mehr tragen. Lass erst etwas zurück.",
+                narration=f"Dein Rucksack ist voll, {_listing(names, result['left'])} bleibt liegen.",
+                result=result,
+            )
         return _reject(conn, "loot", cid, reason, _SIM_HINTS.get(reason, "Das klappt nicht."))
+    narration = _narrate_loot(conn, result)
     adv = advance_world(conn, cid, _loot_minutes(loc["footprint_m2"]))
     return _response(
         conn, "loot", cid, minutes_spent=adv["spent"], stopped=adv["stopped"],
-        events=adv["events"], result=result,
+        events=adv["events"], result=result, narration=narration,
     )
 
 
@@ -440,6 +530,9 @@ def _do_consume(conn, cid, action, kind: str) -> dict[str, Any]:
         if hunger >= _NOT_HUNGRY_ABOVE:
             return _reject(conn, kind, cid, "not_hungry", "Du bist satt.")
         fn, minutes = resources.eat, constants.EAT_MINUTES
+        if item_id is None:  # bestes verfügbares Essen (wie die Auto-Versorgung)
+            best = provision._best_ready_food(conn, _group_id(conn, cid), None)
+            item_id = best[0] if best else None
     else:
         fn, minutes = resources.prepare, constants.PREPARE_MINUTES
     result = fn(conn, cid, item_id)
@@ -447,10 +540,11 @@ def _do_consume(conn, cid, action, kind: str) -> dict[str, Any]:
         reason = result.get("reason", "failed")
         return _reject(conn, kind, cid, reason, _SIM_HINTS.get(reason, "Das geht gerade nicht."))
     movement.clear_destination(conn, cid)
+    narration = _narrate_consume(conn, kind, result)
     adv = advance_world(conn, cid, minutes)
     return _response(
         conn, kind, cid, minutes_spent=adv["spent"], stopped=adv["stopped"],
-        events=adv["events"], result=result,
+        events=adv["events"], result=result, narration=narration,
     )
 
 
@@ -466,6 +560,7 @@ def _do_wait(conn, cid, action) -> dict[str, Any]:
     return _response(
         conn, "wait", cid, minutes_spent=adv["spent"], stopped=adv["stopped"],
         events=adv["events"], result={"requested_minutes": minutes},
+        narration=_narrate_wait(adv["spent"], adv["stopped"]),
     )
 
 
@@ -491,6 +586,7 @@ def _do_sleep(conn, cid, action) -> dict[str, Any]:
         conn, "sleep", cid, minutes_spent=adv["spent"], stopped=stopped,
         events=adv["events"],
         result={"sleep_before": round(start, 4), "sleep_after": round(_sleep_value(conn, cid), 4)},
+        narration=_narrate_sleep(adv["spent"], stopped, _sleep_value(conn, cid)),
     )
 
 
@@ -620,7 +716,11 @@ def available(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]:
                 "kind": "search", "label": "Durchsuchen", "location_id": here["id"],
                 "minutes": _search_minutes(fp),
             })
-        elif _has_inventory(conn, here["id"]):
+        elif _has_inventory(conn, here["id"]) and looting.plan_loot(
+            conn, here["id"],
+            looting.carry_capacity(conn, char["group_id"])
+            - movement.carried_weight(conn, char["group_id"]),
+        )[0]:
             actions.append({
                 "kind": "loot", "label": "Plündern", "location_id": here["id"],
                 "minutes": _loot_minutes(fp),
@@ -628,36 +728,45 @@ def available(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]:
 
     gid = char["group_id"]
     if char["hunger"] < _NOT_HUNGRY_ABOVE:
-        for r in conn.execute(
-            "SELECT gi.item_id, ic.name FROM group_inventory gi "
-            "JOIN item_catalog ic ON ic.id = gi.item_id "
-            "WHERE gi.group_id = ? AND ic.category = 'food' AND ic.needs_preparation = 0 "
-            "AND gi.quantity > 0 GROUP BY gi.item_id ORDER BY gi.item_id;",
-            (gid,),
-        ).fetchall():
+        options = [
+            {"item_id": r["item_id"], "name": r["name"], "quantity": r["q"]}
+            for r in conn.execute(
+                "SELECT gi.item_id, ic.name, SUM(gi.quantity) AS q FROM group_inventory gi "
+                "JOIN item_catalog ic ON ic.id = gi.item_id "
+                "WHERE gi.group_id = ? AND ic.category = 'food' AND ic.needs_preparation = 0 "
+                "AND gi.quantity > 0 GROUP BY gi.item_id ORDER BY ic.name;",
+                (gid,),
+            ).fetchall()
+        ]
+        if options:
             actions.append({
-                "kind": "eat", "label": f"Essen: {r['name']}", "item_id": r["item_id"],
-                "minutes": constants.EAT_MINUTES,
+                "kind": "eat", "label": "Essen", "minutes": constants.EAT_MINUTES,
+                "options": options,
             })
 
     if heat.can_provide_heat(conn, gid) is not None:
-        for r in conn.execute(
-            "SELECT gi.item_id, ic.name, ic.requires_water_l AS w FROM group_inventory gi "
-            "JOIN item_catalog ic ON ic.id = gi.item_id "
-            "WHERE gi.group_id = ? AND ic.needs_preparation = 1 "
-            "AND ic.prepared_into IS NOT NULL "
-            "GROUP BY gi.item_id HAVING SUM(gi.quantity) >= 1 ORDER BY gi.item_id;",
-            (gid,),
-        ).fetchall():
-            water = conn.execute(
-                "SELECT COALESCE(SUM(quantity), 0.0) AS q FROM group_inventory "
-                "WHERE group_id = ? AND item_id = 'water_1l';", (gid,),
-            ).fetchone()["q"]
-            if water + 1e-9 >= (r["w"] or 0.0):
-                actions.append({
-                    "kind": "prepare", "label": f"Zubereiten: {r['name']}",
-                    "item_id": r["item_id"], "minutes": constants.PREPARE_MINUTES,
-                })
+        water = conn.execute(
+            "SELECT COALESCE(SUM(quantity), 0.0) AS q FROM group_inventory "
+            "WHERE group_id = ? AND item_id = 'water_1l';", (gid,),
+        ).fetchone()["q"]
+        options = [
+            {"item_id": r["item_id"], "name": r["name"], "quantity": r["q"]}
+            for r in conn.execute(
+                "SELECT gi.item_id, ic.name, SUM(gi.quantity) AS q, "
+                "ic.requires_water_l AS w FROM group_inventory gi "
+                "JOIN item_catalog ic ON ic.id = gi.item_id "
+                "WHERE gi.group_id = ? AND ic.needs_preparation = 1 "
+                "AND ic.prepared_into IS NOT NULL "
+                "GROUP BY gi.item_id HAVING SUM(gi.quantity) >= 1 ORDER BY ic.name;",
+                (gid,),
+            ).fetchall()
+            if water + 1e-9 >= (r["w"] or 0.0)
+        ]
+        if options:
+            actions.append({
+                "kind": "prepare", "label": "Zubereiten",
+                "minutes": constants.PREPARE_MINUTES, "options": options,
+            })
 
     actions.append({"kind": "wait", "label": "1 Std. warten", "minutes": 60})
     until_morning = minutes_until_morning(conn)

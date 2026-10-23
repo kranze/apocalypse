@@ -360,7 +360,8 @@ def test_available_lists_sensible_actions(world):
     kinds = [a["kind"] for a in av["actions"]]
     assert {"loot", "eat", "wait", "sleep"} <= set(kinds)
     eat = next(a for a in av["actions"] if a["kind"] == "eat")
-    assert eat["label"] == "Essen: Dose Bohnen" and eat["item_id"] == "canned_beans"
+    assert eat["label"] == "Essen" and eat["options"][0]["item_id"] == "canned_beans"
+    assert eat["options"][0]["name"] == "Dose Bohnen"
     morning = next(a for a in av["actions"] if a["label"] == "Bis 7 Uhr warten")
     assert morning["minutes"] == 60  # Start 06:00 -> 07:00
     assert next(a for a in av["actions"] if a["kind"] == "sleep")["minutes"] is None

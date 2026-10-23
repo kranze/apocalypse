@@ -317,9 +317,15 @@ def get_chat(character_id: int = Query(1), limit: int = Query(40)) -> list[dict]
 def location_inventory(location_id: int) -> list[dict]:
     conn = db.get_connection()
     try:
-        return generation.current_inventory(conn, location_id)
+        return _with_names(conn, generation.current_inventory(conn, location_id))
     finally:
         conn.close()
+
+
+def _with_names(conn, rows: list[dict]) -> list[dict]:
+    """Ergänzt jede Inventarzeile um den Anzeigenamen (item_catalog.name)."""
+    names = dict(conn.execute("SELECT id, name FROM item_catalog;").fetchall())
+    return [{**r, "name": names.get(r["item_id"], r["item_id"])} for r in rows]
 
 
 @app.get("/groups/{group_id}/inventory")
@@ -331,9 +337,22 @@ def group_inventory(group_id: int) -> list[dict]:
             "WHERE group_id = ? ORDER BY item_id, quality DESC;",
             (group_id,),
         ).fetchall()
+        return _with_names(conn, [dict(row) for row in rows])
     finally:
         conn.close()
-    return [dict(row) for row in rows]
+
+
+@app.get("/groups/{group_id}/carry")
+def group_carry(group_id: int) -> dict:
+    """Getragenes Gewicht und Tragekapazität der Gruppe in kg (für das HUD)."""
+    conn = db.get_connection()
+    try:
+        return {
+            "carried_kg": round(movement.carried_weight(conn, group_id), 2),
+            "capacity_kg": round(looting.carry_capacity(conn, group_id), 2),
+        }
+    finally:
+        conn.close()
 
 
 @app.post("/world/tick")

@@ -31,6 +31,13 @@ SLEEP_MAX_MINUTES = 720
 FREETEXT_DEFAULT_MINUTES = 15    # Freitext ohne eigene Zeitkosten
 FREETEXT_MAX_MINUTES = 240       # Klemme für advance_time-Effekte
 ARRIVE_REACH_M = 15.0            # so nah am Ziel gilt man als "dort"
+# Tragekapazität pro lebendem Gruppenmitglied (kg):
+#   clamp(CARRY_BODY_FRACTION * Körpergewicht, CARRY_MIN_KG, CARRY_MAX_KG)
+# z. B. 70 kg Körpergewicht -> 21 kg. Die Gruppenkapazität ist die Summe.
+CARRY_BODY_FRACTION = 0.30
+CARRY_MIN_KG = 10.0
+CARRY_MAX_KG = 30.0
+CARRY_DEFAULT_BODY_KG = 70.0     # falls weight_kg fehlt
 
 # --- Hunger -------------------------------------------------------------
 # Sättigung 0..1 (1 = satt). Ohne Nahrung in ~3 Spieltagen von 1.0 auf 0.
