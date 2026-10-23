@@ -81,9 +81,10 @@ html, body {
 #cmd:focus { outline: none; border-color: var(--accent2); }
 #btn-cmd { flex: none; padding: 7px 10px; }
 
-.speedbar { display: flex; gap: 4px; }
-.speedbar button { flex: 1; padding: 6px 4px; font-size: 12px; }
-.speedbar button.active { background: var(--accent); color: #11150f; border-color: var(--accent); font-weight: 600; }
+.daytime { font-size: 20px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+.actionbar { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 4px; }
+.actionbar button { padding: 6px 8px; font-size: 12px; }
+.actionbar .cost { opacity: .7; }
 
 .buttons { display: flex; gap: 6px; }
 button {

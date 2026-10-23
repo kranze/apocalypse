@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+from collections.abc import Collection
 from typing import Any
 
 from . import constants, kb, ledger
@@ -166,8 +167,15 @@ def _try_cook(conn, group_id, loc_id, now_tick) -> bool:
     return True
 
 
-def auto_provision(conn: sqlite3.Connection, minutes: int, now_tick: int) -> list[dict[str, Any]]:
-    """Deckt Durst/Hunger automatisch aus Rucksack+Ort; lässt Müde ruhen."""
+def auto_provision(
+    conn: sqlite3.Connection, minutes: int, now_tick: int,
+    resting: Collection[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Deckt Durst/Hunger automatisch aus Rucksack+Ort; lässt Müde ruhen.
+
+    ``resting`` = IDs, die explizit schlafen (Aktion „Schlafen“): sie erholen
+    Schlaf auch oberhalb von SLEEP_REST_BELOW.
+    """
     events: list[dict[str, Any]] = []
     for char in conn.execute(
         "SELECT id, name, group_id, lat, lon, hunger, thirst, sleep, path_json, "
@@ -215,7 +223,10 @@ def auto_provision(conn: sqlite3.Connection, minutes: int, now_tick: int) -> lis
                           subject_type="character", subject_id=char["id"]))
 
         # --- Schlaf: ruhen, wenn untätig und müde ---
-        if char["sleep"] < constants.SLEEP_REST_BELOW and char["path_json"] is None:
+        sleeping = resting is not None and char["id"] in resting
+        if char["path_json"] is None and (
+            sleeping or char["sleep"] < constants.SLEEP_REST_BELOW
+        ):
             rest = minutes / constants.MINUTES_PER_DAY * constants.SLEEP_RECOVERY_PER_DAY
             new_sleep = min(1.0, char["sleep"] + rest)
             conn.execute("UPDATE characters SET sleep=? WHERE id=?;", (round(new_sleep, 6), char["id"]))

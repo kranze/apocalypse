@@ -108,16 +108,23 @@ def apply_thirst(conn, minutes, now_tick, distances=None) -> list[dict[str, Any]
     return interrupts
 
 
-def apply_sleep(conn, minutes, now_tick) -> list[dict[str, Any]]:
-    """Schlafdruck im Wachzustand (Erholung passiert in der Versorgung/Ruhe)."""
+def apply_sleep(conn, minutes, now_tick, resting=None) -> list[dict[str, Any]]:
+    """Schlafdruck im Wachzustand (Erholung passiert in der Versorgung/Ruhe).
+
+    Müdigkeits-Interrupts nur für Charaktere, die NICHT ruhen (ruhend = explizit
+    in ``resting`` oder untätig, d.h. ohne Route: dann erholt auto_provision
+    sofort wieder). Sonst pendelt der Wert um die Schwelle (Abzug, Erholung,
+    Abzug ...) und kreuzt sie bei jedem dritten Tick erneut nach unten."""
     loss = minutes / constants.MINUTES_PER_DAY * constants.SLEEP_LOSS_PER_DAY
     interrupts = []
     for row in conn.execute(
-        "SELECT id, name, sleep FROM characters WHERE is_alive = 1;"
+        "SELECT id, name, sleep, path_json FROM characters WHERE is_alive = 1;"
     ).fetchall():
         old = row["sleep"]
         new = max(0.0, old - loss)
         conn.execute("UPDATE characters SET sleep = ? WHERE id = ?;", (round(new, 6), row["id"]))
+        if row["path_json"] is None or (resting is not None and row["id"] in resting):
+            continue
         if old >= constants.HUNGER_CRIT > new:
             interrupts.append(emit_event(conn, now_tick, "need", f"{row['name']} ist völlig erschöpft.",
                               severity="soft", subject_type="character", subject_id=row["id"]))

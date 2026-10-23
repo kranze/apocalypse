@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from . import config, db
 from .osm import loader
 from .sim import (
-    adjudicator, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
+    actions as actions_mod, adjudicator, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
 from .sim import chunks as chunks_mod
 from .sim import survivor_sim, survivors as survivors_mod
@@ -60,6 +60,19 @@ class FastForwardRequest(BaseModel):
 
 class EatRequest(BaseModel):
     item_id: str | None = None
+
+
+class ActionRequest(BaseModel):
+    character_id: int = 1
+    kind: str
+    lat: float | None = None
+    lon: float | None = None
+    location_id: int | None = None
+    item_id: str | None = None
+    minutes: int | None = None
+    text: str | None = None
+    override_text: str | None = None
+    override_reason: str | None = None
 
 
 class MoveRequest(BaseModel):
@@ -106,12 +119,7 @@ class EnsureChunksRequest(BaseModel):
     max_lon: float
 
 
-_CHARACTER_COLS = (
-    "id, name, type, group_id, age, lat, lon, hunger, thirst, sleep, injury, "
-    "exposure, satisfaction, performance, is_alive, daily_kcal, daily_water_l, "
-    "birthdate, sex, height_cm, weight_kg, profession, education, family, hobbies, "
-    "self_description, home_lat, home_lon, dest_lat, dest_lon, path_json"
-)
+_CHARACTER_COLS = actions_mod.CHARACTER_COLS  # eine Quelle, gleiche Form wie /actions
 
 
 _LOCATION_COLS = (
@@ -440,10 +448,36 @@ def world_state() -> dict:
         "tick": w["tick"],
         "datetime": dt.isoformat(),
         "phase": w["phase"],
+        "day": actions_mod.calendar_day(w["start_datetime"], w["tick"]),
+        "days_total": constants.DAYS_TOTAL,
+        "time_of_day": dt.strftime("%H:%M"),
         "tick_minutes": constants.TICK_MINUTES,
         "weather": {"temp_c": w["weather_temp_c"], "state": w["weather_state"]},
         "player": dict(player) if player else None,
     }
+
+
+@app.post("/actions")
+def post_action(req: ActionRequest) -> dict:
+    """Aktionsbasierte Zeit: Aktion ausführen, Welt um deren Dauer vorrücken.
+    Immer HTTP 200 — Ablehnungen stehen in ``ok``/``reason``/``hint``."""
+    conn = db.get_connection()
+    try:
+        return actions_mod.perform(
+            conn, req.character_id, req.model_dump(exclude={"character_id"})
+        )
+    finally:
+        conn.close()
+
+
+@app.get("/actions/available")
+def get_actions_available(character_id: int = 1) -> dict:
+    """Aktuell sinnvolle Klickaktionen (Aktionsleiste)."""
+    conn = db.get_connection()
+    try:
+        return actions_mod.available(conn, character_id)
+    finally:
+        conn.close()
 
 
 @app.post("/adjudicate")

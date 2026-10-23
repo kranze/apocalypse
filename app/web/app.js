@@ -59,11 +59,10 @@ const markers = new Map(); // id -> L.circleMarker
 const locData = new Map(); // id -> location
 let selectedId = null;
 
-// Zeitfluss
-let speed = 0;          // 0 = Pause; sonst Spielminuten pro Frame
-let frameBusy = false;  // verhindert überlappende Tick-Requests
-const FRAME_MS = 1000;
-let lastPlayer = null;  // zuletzt bekannter Spielerzustand (für Ankunftserkennung)
+// Aktions-basierte Zeit: Zeit vergeht nur durch Aktionen (POST /actions).
+let actionBusy = false;   // eine Aktion läuft -> Aktions-UI gesperrt
+let gameOver = false;     // Endzustand (tot / Woche vorbei) angezeigt
+const WALK_ANIM_MS = 1200; // Dauer der Lauf-Animation des Spieler-Markers
 
 // Chatfenster ist die Haupt-I/O. role: "player" | "claude" | "system".
 function chat(role, text) {
@@ -120,8 +119,10 @@ function setBar(fillId, valId, value, thresholds) {
 
 async function refreshState() {
   const s = await getJSON("/world/state");
-  document.getElementById("clock").textContent =
-    `${fmtDateTime(s.datetime)} · Phase ${s.phase} · ${s.weather.temp_c}°C`;
+  const dayNo = (s.day ?? 0) + 1;
+  document.getElementById("daytime").textContent =
+    `Tag ${dayNo} von ${s.days_total ?? 7} · ${s.time_of_day ?? "--:--"}`;
+  document.getElementById("clock").textContent = `Wetter: ${s.weather.temp_c}°C`;
   const p = s.player;
   if (p) {
     setBar("hunger-fill", "hunger-val", p.hunger);
@@ -134,10 +135,9 @@ async function refreshState() {
     document.getElementById("needs").textContent =
       `Bedarf: ${Math.round(p.daily_kcal)} kcal/Tag · ${p.daily_water_l} L/Tag`;
     if (p.lat != null && p.lon != null) movePlayerMarker(p.lat, p.lon);
-    updateRoute(p);
-    lastPlayer = p;
   }
   await refreshInventory();
+  checkEndState(s);
   if (!document.getElementById("roster-list").classList.contains("hidden")) {
     await renderRoster();
   }
@@ -368,29 +368,35 @@ async function selectLocation(id) {
   if (loc.discovery_status !== "undiscovered") {
     const items = await getJSON(`/locations/${id}/inventory`);
     renderPanelInv(items);
+    // „Durchsuchen" nur, wenn der Ort noch nicht durchsucht ist (Aktionsleiste weiß das).
+    let canSearch = false;
+    try {
+      const av = await getJSON(`/actions/available?character_id=${PLAYER_ID}`);
+      canSearch = av.actions.some((a) => a.kind === "search" && a.location_id === id);
+    } catch (e) { /* ohne Aktionsleiste kein Durchsuchen-Knopf */ }
+    if (canSearch) {
+      const sb = document.createElement("button");
+      sb.textContent = "Durchsuchen";
+      sb.onclick = () => doAction({ kind: "search", location_id: id });
+      actions.appendChild(sb);
+    }
     if (items.length) {
       const b = document.createElement("button");
       b.textContent = "Plündern";
-      b.onclick = () => doLoot(id);
+      b.onclick = () => doAction({ kind: "loot", location_id: id });
       actions.appendChild(b);
     }
   }
 }
 
-let pendingArrival = null;  // Location-id, zu der gerade gelaufen wird
-
 async function doGoto(loc) {
   document.getElementById("panel").classList.add("hidden");
   selectedId = null;
   clearHighlight();
-  pendingArrival = loc.id;
-  await walkTo(loc.lat, loc.lon);
-  setSpeed(4); // automatisch hinlaufen
+  await doAction({ kind: "walk", location_id: loc.id });
 }
 
 async function arriveAt(id) {
-  pendingArrival = null;
-  setSpeed(0);
   try {
     const r = await postJSON(`/locations/${id}/arrive`, {});
     const loc = await getJSON(`/locations/${id}`);
@@ -399,7 +405,6 @@ async function arriveAt(id) {
     chat("claude", r.narration || "");
     const input = document.getElementById("cmd");
     input.placeholder = "Was willst du hier tun? (z. B. ich suche …)";
-    input.focus();
   } catch (e) { log("Fehler: " + e.message, "decision"); }
 }
 
@@ -424,18 +429,6 @@ async function doDiscover(id) {
     updateLocation(loc);
     log(`Betreten: ${loc.name || loc.type} (${r.inventory.length} Stapel).`);
     await selectLocation(id);
-  } catch (e) { log("Fehler: " + e.message, "decision"); }
-}
-
-async function doLoot(id) {
-  try {
-    const r = await postJSON(`/locations/${id}/loot`, {});
-    const loc = await getJSON(`/locations/${id}`);
-    updateLocation(loc);
-    const n = Object.keys(r.transferred).length;
-    log(`Geplündert: ${loc.name || loc.label || loc.type} (${n} Item-Arten) → ${r.status}.`);
-    await selectLocation(id);
-    await refreshInventory();
   } catch (e) { log("Fehler: " + e.message, "decision"); }
 }
 
@@ -487,20 +480,37 @@ function drawRoute(waypoints) {
   }).addTo(map);
 }
 
-function updateRoute(player) {
-  if (player.path_json) {
-    try { drawRoute(JSON.parse(player.path_json)); return; } catch (e) {}
-  }
+function clearRoute() {
   if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
 }
 
-async function walkTo(lat, lon) {
-  // Ziel setzen + Route berechnen; der Spieler läuft sie über die Ticks ab.
-  try {
-    const r = await postJSON(`/characters/${PLAYER_ID}/move`, { lat, lon });
-    drawRoute(r.path);
-    log(`Unterwegs zum Ziel (${Math.round(r.distance_m)} m).`);
-  } catch (e) { log("Fehler: " + e.message, "decision"); }
+// Spieler-Marker clientseitig entlang des Pfads bewegen (reine Optik;
+// die echte Position kommt danach aus dem Serverzustand).
+function animateAlongPath(path) {
+  return new Promise((resolve) => {
+    if (!path || path.length < 2 || !playerMarker) { resolve(); return; }
+    const seg = [0]; // kumulierte Länge (Grad-Distanz reicht für Interpolation)
+    for (let i = 1; i < path.length; i++) {
+      seg.push(seg[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
+    }
+    const total = seg[seg.length - 1];
+    if (total === 0) { resolve(); return; }
+    const t0 = performance.now();
+    function step(now) {
+      const f = Math.min(1, (now - t0) / WALK_ANIM_MS);
+      const d = f * total;
+      let i = 1;
+      while (i < seg.length - 1 && seg[i] < d) i++;
+      const span = seg[i] - seg[i - 1] || 1;
+      const u = Math.max(0, Math.min(1, (d - seg[i - 1]) / span));
+      playerMarker.setLatLng([
+        path[i - 1][0] + (path[i][0] - path[i - 1][0]) * u,
+        path[i - 1][1] + (path[i][1] - path[i - 1][1]) * u,
+      ]);
+      if (f < 1) requestAnimationFrame(step); else resolve();
+    }
+    requestAnimationFrame(step);
+  });
 }
 
 // --- Tick / Aktionen ---------------------------------------------------
@@ -508,110 +518,162 @@ function reportInterrupts(list) {
   for (const i of list || []) log(i.message, i.severity);
 }
 async function refreshDiscoveredMarkers() {
-  // Nach Ticks können sich Bestände/Status geändert haben (Verderb) – nur Viewport neu laden.
+  // Nach Aktionen können sich Bestände/Status geändert haben – nur Viewport neu laden.
   await refreshLocationsInView();
 }
 
-function setSpeed(s) {
-  speed = s;
-  for (const b of document.querySelectorAll("#speedbar button")) {
-    b.classList.toggle("active", Number(b.dataset.speed) === s);
+// Aktions-UI sperren/entsperren, solange eine Aktion läuft.
+function setActionBusy(busy) {
+  actionBusy = busy;
+  const sel = "#actionbar button, #panel-actions button, #btn-cmd, #cmd";
+  for (const el of document.querySelectorAll(sel)) el.disabled = busy;
+}
+
+// Aktionsleiste aus GET /actions/available füllen.
+async function loadActionBar() {
+  const bar = document.getElementById("actionbar");
+  if (!bar) return;
+  if (gameOver) { bar.innerHTML = ""; return; }
+  try {
+    const av = await getJSON(`/actions/available?character_id=${PLAYER_ID}`);
+    bar.innerHTML = "";
+    for (const a of av.actions || []) {
+      const b = document.createElement("button");
+      b.textContent = a.label;
+      if (a.minutes != null) {
+        const c = document.createElement("span");
+        c.className = "cost";
+        c.textContent = ` · ${a.minutes} min`;
+        b.appendChild(c);
+      }
+      b.disabled = actionBusy;
+      b.onclick = () => {
+        const { label, minutes, ...payload } = a; // kind + Parameter zurücksenden
+        doAction(payload);
+      };
+      bar.appendChild(b);
+    }
+  } catch (e) { /* Leiste nicht kritisch */ }
+}
+
+// Einziger Weg, Zeit vergehen zu lassen: eine Aktion an den Sim-Kern senden.
+async function doAction(payload) {
+  if (actionBusy || gameOver) return null;
+  setActionBusy(true);
+  let r = null;
+  try {
+    r = await postJSON("/actions", { character_id: PLAYER_ID, ...payload });
+    await handleActionResult(r);
+  } catch (e) {
+    log("Fehler: " + e.message, "decision");
+  } finally {
+    setActionBusy(false);
+  }
+  await loadActionBar();
+  return r;
+}
+
+async function handleActionResult(r) {
+  if (r.narration) chat("claude", r.narration);
+  if (r.hint) log(r.hint);
+  if (!r.ok) {
+    if (!r.hint && !r.narration) log(`Nicht möglich (${r.reason || "unbekannt"}).`);
+    return;
+  }
+  if (r.minutes_spent > 0) log(`(+${r.minutes_spent} min)`);
+  reportInterrupts(r.interrupts);
+
+  // Laufen: Marker entlang des Pfads animieren, dann auf Serverposition setzen.
+  if (r.path && r.path.length > 1) {
+    drawRoute(r.path);
+    await animateAlongPath(r.path);
+    clearRoute();
+  }
+  if (r.path && r.stopped === "interrupt") log("Der Weg wurde unterbrochen.");
+  if (r.path && r.stopped === "max") log("Du bist lange gelaufen und legst eine Pause ein.");
+  if (r.player && r.player.lat != null) movePlayerMarker(r.player.lat, r.player.lon);
+
+  await refreshState(); // HUD, Inventar, Endzustand
+  await refreshDiscoveredMarkers();
+  if (r.stopped === "dead") checkEndState({ player: { is_alive: false }, day: r.day });
+  if (r.arrived_location_id != null) await arriveAt(r.arrived_location_id);
+  else if (selectedId !== null) await selectLocation(selectedId);
+}
+
+// --- Endzustände (Platzhalter für M5) ----------------------------------
+function showEnd(title, text) {
+  gameOver = true;
+  document.getElementById("end-title").textContent = title;
+  document.getElementById("end-text").textContent = text;
+  document.getElementById("endscreen").classList.remove("hidden");
+}
+
+function checkEndState(s) {
+  if (gameOver || !s) return;
+  const dayNo = (s.day ?? 0) + 1;
+  if (s.player && s.player.is_alive === false) {
+    showEnd("Du hast nicht überlebt", `Du hast Tag ${dayNo} erreicht.`);
+  } else if (s.days_total != null && s.day >= s.days_total) {
+    showEnd("Die erste Woche ist vorbei",
+      "Die Entscheidung, wie es weitergeht, folgt in einer späteren Version.");
   }
 }
 
-async function tickFrame() {
-  if (speed === 0 || frameBusy) return;
-  frameBusy = true;
-  try {
-    const r = await postJSON("/world/tick", { minutes: speed });
-    await refreshState();
-    const halting = (r.interrupts || []).filter(
-      (i) => i.severity === "soft" || i.severity === "decision"
-    );
-    if (halting.length) {
-      setSpeed(0); // bei Ereignis automatisch pausieren (DESIGN.md §4)
-      reportInterrupts(halting);
-    }
-    // Ankunft am Ziel-Gebäude -> Claude-Dialog zum Ort.
-    if (pendingArrival != null && lastPlayer && !lastPlayer.path_json) {
-      await arriveAt(pendingArrival);
-    }
-  } catch (e) {
-    setSpeed(0);
-    log("Fehler: " + e.message, "decision");
-  } finally {
-    frameBusy = false;
-  }
+function newGameScreen() {
+  document.getElementById("endscreen").classList.add("hidden");
+  gameOver = false;
+  document.getElementById("onboarding").classList.remove("hidden");
 }
-async function doFastForward() {
-  setSpeed(0);
-  try {
-    const r = await postJSON("/world/fast-forward", { max_ticks: 5000 });
-    log(`Vorgespult bis Tick ${r.tick} (${r.stopped}).`);
-    reportInterrupts(r.interrupts);
-    await refreshState();
-    await refreshDiscoveredMarkers();
-  } catch (e) { log("Fehler: " + e.message, "decision"); }
-}
+
 // Free-Text-Adjudikation; bei no_heat wird der nächste Input als Override-Begründung gewertet.
 let overrideCommand = null;
 async function doCommand() {
+  if (actionBusy || gameOver) return;
   const input = document.getElementById("cmd");
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
   chat("player", text);
-  try {
-    const r = overrideCommand
-      ? await postJSON("/adjudicate/override", { text: overrideCommand, reason: text })
-      : await postJSON("/adjudicate", { text });
-
-    // Claudes Antwort als Chat-Blase; Ablehnungs-Hinweis als System-Zeile.
-    chat("claude", r.narration || "…");
-    if (!r.ok && r.hint) log(r.hint);
-
-    if (r.escalate && r.reason === "no_heat") {
-      overrideCommand = overrideCommand || text;
-      input.placeholder = "Begründung: womit erzeugst du Hitze?";
-    } else if (r.escalate && r.reason === "override_unclear") {
-      input.placeholder = "Nenne einen Gegenstand aus deinem Rucksack …";
-    } else {
-      overrideCommand = null;
-      input.placeholder = "Was tust du?";
-    }
-    if (r.override_learned) {
-      log(`Gelernt: ${r.override_learned.key} liefert ab jetzt Hitze.`);
-    }
-    await refreshState();
-    await refreshDiscoveredMarkers();
-  } catch (e) {
-    log("Fehler: " + e.message, "decision");
+  const payload = overrideCommand
+    ? { kind: "freetext", text: overrideCommand, override_text: overrideCommand, override_reason: text }
+    : { kind: "freetext", text };
+  const r = await doAction(payload);
+  if (!r) return;
+  // escalate/reason/override_learned: Top-Level oder in result
+  const res = r.result || {};
+  const escalate = r.escalate ?? res.escalate;
+  const reason = r.reason ?? res.reason;
+  if (escalate && reason === "no_heat") {
+    overrideCommand = overrideCommand || text;
+    input.placeholder = "Begründung: womit erzeugst du Hitze?";
+  } else if (escalate && reason === "override_unclear") {
+    input.placeholder = "Nenne einen Gegenstand aus deinem Rucksack …";
+  } else {
+    overrideCommand = null;
+    input.placeholder = "Was tust du?";
   }
+  const learned = r.override_learned || res.override_learned;
+  if (learned) log(`Gelernt: ${learned.key} liefert ab jetzt Hitze.`);
+  if (!gameOver) input.focus();
 }
 
 // --- Onboarding / Intro / Start ---------------------------------------
-let _mapReady = false, _hudWired = false, _loopStarted = false;
+let _mapReady = false, _hudWired = false;
 
 function buildMap(center) {
   map = L.map("map", { zoomControl: true }).setView(center, 16);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19, attribution: "© OpenStreetMap",
   }).addTo(map);
-  map.on("click", (e) => walkTo(e.latlng.lat, e.latlng.lng));
+  map.on("click", (e) => doAction({ kind: "walk", lat: e.latlng.lat, lon: e.latlng.lng }));
   map.on("moveend", scheduleViewportRefresh);
   map.on("zoomend", scheduleViewportRefresh);
   _mapReady = true;
 }
 
 function wireHud() {
-  for (const b of document.querySelectorAll("#speedbar button")) {
-    b.onclick = () => setSpeed(Number(b.dataset.speed));
-  }
-  document.getElementById("btn-ff").onclick = doFastForward;
-  document.getElementById("btn-newgame").onclick = () => {
-    setSpeed(0); // Zeit anhalten, Erstellungs-Screen erneut zeigen
-    document.getElementById("onboarding").classList.remove("hidden");
-  };
+  document.getElementById("btn-newgame").onclick = newGameScreen;
+  document.getElementById("btn-end-newgame").onclick = newGameScreen;
   document.getElementById("btn-roster").onclick = toggleRoster;
   document.getElementById("btn-cmd").onclick = doCommand;
   document.getElementById("cmd").addEventListener("keydown", (e) => {
@@ -636,7 +698,7 @@ async function startGame(state) {
   await loadChatHistory();
   await loadLocations();
   await refreshState();
-  if (!_loopStarted) { setInterval(tickFrame, FRAME_MS); _loopStarted = true; }
+  await loadActionBar();
 }
 
 function showIntro(text) {
@@ -675,8 +737,10 @@ async function submitOnboarding() {
     // Intro in den Chat schreiben (direkt, kein loadChatHistory nötig — frisch).
     _chatHistoryLoaded = true; // verhindert doppeltes Laden
     chat("claude", r.intro);
+    gameOver = false;
+    document.getElementById("endscreen").classList.add("hidden");
     await refreshState();
-    if (!_loopStarted) { setInterval(tickFrame, FRAME_MS); _loopStarted = true; }
+    await loadActionBar();
     // Heimat-Chunks sofort im Hintergrund laden (kein Warten auf moveend).
     ensureChunksInView().then(() => refreshLocationsInView()).catch(() => {});
   } catch (e) {

@@ -10,7 +10,7 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   />
-  <link rel="stylesheet" href="/style.css?v=8" />
+  <link rel="stylesheet" href="/style.css?v=9" />
 </head>
 <body>
   <div id="map"></div>
@@ -20,17 +20,9 @@
   <!-- HUD (im Spiel) -->
   <div id="hud" class="hidden">
     <h1>Wasteland</h1>
+    <div class="row daytime" id="daytime">—</div>
     <div class="row" id="clock">—</div>
-    <div class="row speedbar" id="speedbar">
-      <button data-speed="0" class="active" title="Pause">⏸</button>
-      <button data-speed="1">1×</button>
-      <button data-speed="2">2×</button>
-      <button data-speed="4">4×</button>
-      <button data-speed="8">8×</button>
-      <button data-speed="16">16×</button>
-    </div>
     <div class="row buttons">
-      <button id="btn-ff" title="bis zum nächsten Ereignis">⏭ Ereignis</button>
       <button id="btn-newgame" title="Neues Spiel beginnen">⟳ Neues Spiel</button>
     </div>
 
@@ -53,11 +45,12 @@
 
     <h2>Chat</h2>
     <div id="chat"></div>
+    <div id="actionbar" class="actionbar"></div>
     <div class="row cmdrow">
       <input id="cmd" type="text" placeholder="Was tust du? (z. B. ich suche Wasser)" autocomplete="off" />
       <button id="btn-cmd">▶</button>
     </div>
-    <p class="hint">Karte klicken = laufen · Gebäude klicken → „Gehe zu" · im Chat sagen, was du tust/suchst.</p>
+    <p class="hint">Karte klicken = laufen (kostet Zeit) · Gebäude klicken → „Gehe zu" · im Chat sagen, was du tust/suchst.</p>
     <p class="hint"><a href="/worldmap" style="opacity:0.5;font-size:0.8em;">🌍 Welt-Übersicht (Debug)</a></p>
   </div>
 
@@ -68,6 +61,15 @@
     <div id="panel-meta"></div>
     <div id="panel-actions"></div>
     <ul id="panel-inv"></ul>
+  </div>
+
+  <!-- Endzustände (Platzhalter für M5) -->
+  <div id="endscreen" class="overlay hidden">
+    <div class="sheet narrow">
+      <h1 id="end-title">—</h1>
+      <p id="end-text" class="sub"></p>
+      <button id="btn-end-newgame">Neues Spiel</button>
+    </div>
   </div>
 
   <!-- Onboarding -->
@@ -111,6 +113,6 @@
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
   ></script>
-  <script src="/app.js?v=10"></script>
+  <script src="/app.js?v=11"></script>
 </body>
 </html>

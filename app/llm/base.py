@@ -39,19 +39,21 @@ class LLMBackend:
         (aus ``chatlog.recent``); Default: None (rückwärtskompatibel)."""
         return ""
 
-    def search_item(
+    def match_items(
         self,
         query: str,
         location: dict[str, Any],
+        candidates: list[dict[str, Any]],
         profile: dict | None = None,
         history: list[dict] | None = None,
     ) -> dict[str, Any]:
-        """Beurteilt, ob ``query`` an diesem Ort plausibel zu finden ist, und
-        erfindet ggf. ein konkretes Item. Liefert {found, narration, item?},
-        item = {name, category, weight_kg, kcal_per_unit?, decay_halflife_min?,
-        quantity}. ``history`` ist optional (rückwärtskompatibel, Default None).
+        """Gleicht eine Freitext-Suche gegen die **vorhandenen** Items eines Ortes
+        ab. ``candidates`` = [{item_id, name, category, quantity}] aus dem vom
+        Sim-Kern generierten Inventar. Liefert {item_ids: [...], narration}:
+        ``item_ids`` darf NUR Kandidaten-IDs enthalten (der Sim-Kern verwirft
+        alles andere); das LLM erfindet weder Items noch Mengen.
         Default: nichts gefunden."""
-        return {"found": False, "narration": "", "item": None}
+        return {"item_ids": [], "narration": ""}
 
 
 def proposal(

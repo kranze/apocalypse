@@ -38,6 +38,40 @@ _RULES: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
+_CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "water": ("wasser", "trink", "getränk", "getraenk", "flasche"),
+    "food": ("essen", "lebensmittel", "nahrung", "konserve", "futter", "proviant", "hunger"),
+    "tool": ("werkzeug",),
+    "medical": ("medizin", "medikament", "arznei", "verband", "erste hilfe", "tablette"),
+    "fuel": ("brennstoff", "sprit", "treibstoff"),
+}
+_ITEM_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "water_1l": ("wasser", "trink"),
+    "canned_beans": ("bohne", "dose"),
+    "canned_meat": ("fleisch", "dose"),
+    "canned_soup": ("eintopf", "suppe", "dose"),
+    "bread_loaf": ("brot",),
+    "milk_1l": ("milch",),
+    "pasta_500g": ("nudel", "pasta"),
+    "crackers": ("keks", "zwieback", "cracker"),
+    "chocolate": ("schoko", "süßigkeit", "suessigkeit"),
+    "flashlight": ("lampe", "licht", "taschenlampe"),
+    "firewood": ("holz", "feuer", "brennholz"),
+    "gasoline": ("benzin", "sprit"),
+    "crowbar": ("kuhfuß", "kuhfuss", "brecheisen", "brechstange"),
+    "hammer": ("hammer",),
+    "rope": ("seil", "strick"),
+    "duct_tape": ("klebeband", "tape", "gewebeband"),
+    "bandage": ("verband", "pflaster"),
+    "painkillers": ("schmerz", "tablette"),
+    "first_aid_kit": ("erste hilfe", "verbandkasten"),
+}
+
+
+def _words(text: str) -> list[str]:
+    return "".join(ch if ch.isalnum() else " " for ch in text.lower()).split()
+
+
 class RuleBackend(LLMBackend):
     name = "stub"
 
@@ -85,29 +119,21 @@ class RuleBackend(LLMBackend):
         name = location.get("name") or location.get("label") or location.get("type") or "ein Ort"
         return f"Du erreichst {name}. Es ist still. Du siehst dich um."
 
-    def search_item(self, query, location, profile=None, history=None) -> dict[str, Any]:
-        """Deterministische Plausibilitäts-Heuristik (kein Netz): Lebensmittel/
-        Wasser in versorgenden Orten, Elektronik/Werkzeug in Wohn-/Gebäuden."""
+    def match_items(self, query, location, candidates, profile=None, history=None) -> dict[str, Any]:
+        """Deterministisches Keyword-Matching gegen die vorhandenen Kandidaten
+        (kein Netz): Item-Name/-ID-Wörter und Oberbegriffe je Kategorie."""
         q = (query or "").lower()
-        loc_type = (location or {}).get("type", "")
-        supply = {"house", "building", "supermarket", "fuel_station", "hospital"}
-        indoors = {"house", "building", "supermarket", "hardware"}
-
-        def hit(name, category, weight, qty, kcal=None):
-            item = {"name": name, "category": category, "weight_kg": weight, "quantity": qty}
-            if kcal is not None:
-                item["kcal_per_unit"] = kcal
-            return {"found": True, "narration": f"Du findest: {name}.", "item": item}
-
-        if any(k in q for k in ("wasser", "trink", "getränk", "getraenk")) and loc_type in supply:
-            return hit("Wasserflasche 1L", "water", 1.0, 3)
-        if any(k in q for k in ("essen", "lebensmittel", "nahrung", "konserve", "futter")) and loc_type in supply:
-            return hit("Dose Eintopf", "food", 0.4, 4, kcal=350)
-        if any(k in q for k in ("fernseher", "tv", "radio", "laptop", "computer", "handy", "elektronik")) and loc_type in indoors:
-            return hit("alter Fernseher", "misc", 12.0, 1)
-        if any(k in q for k in ("werkzeug", "hammer", "schrauben", "zange", "kuhfuß")) and loc_type in indoors:
-            return hit("Werkzeugkiste", "tool", 3.0, 1)
-        return {"found": False, "narration": "Hier gibt es so etwas nicht.", "item": None}
+        ids: list[str] = []
+        for c in candidates or []:
+            words = [w for w in _words(c.get("name", "")) + _words(c.get("item_id", "")) if len(w) >= 4]
+            hit = any(w in q for w in words)
+            hit = hit or any(k in q for k in _ITEM_KEYWORDS.get(c.get("item_id", ""), ()))
+            hit = hit or any(k in q for k in _CATEGORY_KEYWORDS.get(c.get("category", ""), ()))
+            if hit:
+                ids.append(c["item_id"])
+        if not ids:
+            return {"item_ids": [], "narration": "Danach suchst du hier vergeblich."}
+        return {"item_ids": ids, "narration": "Du kramst herum und wirst fündig."}
 
     def _target(self, t: str, context: dict[str, Any]) -> str | None:
         for word, loc_type in _LOCATION_SYNONYMS.items():

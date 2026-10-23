@@ -184,71 +184,51 @@ class ClaudeBackend(LLMBackend):
             return self._fallback.narrate_location(location, profile)
 
 
-    def search_item(self, query, location, profile=None, history=None) -> dict[str, Any]:
+    def match_items(self, query, location, candidates, profile=None, history=None) -> dict[str, Any]:
         sys = (
-            "Der Spieler durchsucht einen konkreten Ort einer Endzeit-Welt nach "
-            "etwas. Beurteile realistisch, ob sich das DORT finden ließe "
-            "(Fernseher im Einfamilienhaus: ja; im Schwimmbad: nein). Wenn ja, "
-            "erfinde EIN konkretes, plausibles Objekt (Marke/Modell wo sinnvoll), "
-            "passende Kategorie, Gewicht in kg, bei Lebensmitteln kcal je Einheit, "
-            "und eine realistische Stückzahl. Schreibe eine knappe deutsche "
-            "Narration. Findet sich nichts, found=false mit kurzer Begründung. "
-            "Antworte nur über das Werkzeug."
+            "Der Spieler durchsucht einen Ort einer Endzeit-Welt und sucht nach "
+            "etwas. Der Ort hat bereits ein festes Inventar (Kandidatenliste). "
+            "Wähle daraus die Items, die zur Suche passen (item_ids, NUR IDs aus "
+            "der Liste; kein passendes Item -> leere Liste) und schreibe eine "
+            "knappe deutsche Narration. Erfinde keine Items und nenne keine "
+            "Mengen. Antworte nur über das Werkzeug."
         )
         history_block = _history_compact(history)
         user = (history_block + "\n\n" if history_block else "") + json.dumps({
             "suche": query,
             "ort": {"art": location.get("label") or location.get("type"),
                     "name": location.get("name")},
+            "kandidaten": [{"item_id": c["item_id"], "name": c["name"],
+                            "kategorie": c.get("category")} for c in candidates],
             "person": profile,
         }, ensure_ascii=False)
         try:
             resp = self._client.messages.create(
                 model=INTERPRET_MODEL, max_tokens=400,
                 system=[{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}],
-                tools=[_FIND_TOOL],
-                tool_choice={"type": "tool", "name": _FIND_TOOL["name"]},
+                tools=[_MATCH_TOOL],
+                tool_choice={"type": "tool", "name": _MATCH_TOOL["name"]},
                 messages=[{"role": "user", "content": user}],
             )
             out = next((b.input for b in resp.content if b.type == "tool_use"), None)
         except Exception:
-            return self._fallback.search_item(query, location, profile)
+            return self._fallback.match_items(query, location, candidates, profile)
         if not out:
-            return self._fallback.search_item(query, location, profile)
-        if not out.get("found"):
-            return {"found": False, "narration": out.get("narration", ""), "item": None}
-        it = out.get("item") or {}
-        return {"found": True, "narration": out.get("narration", ""), "item": {
-            "name": it.get("name"), "category": it.get("category"),
-            "weight_kg": it.get("weight_kg"), "kcal_per_unit": it.get("kcal_per_unit"),
-            "decay_halflife_min": it.get("decay_halflife_min"),
-            "quantity": it.get("quantity", 1),
-        }}
+            return self._fallback.match_items(query, location, candidates, profile)
+        return {"item_ids": [i for i in (out.get("item_ids") or []) if isinstance(i, str)],
+                "narration": out.get("narration", "")}
 
 
-_FIND_TOOL = {
-    "name": "report_find",
-    "description": "Plausibilitäts-Urteil + erfundenes Item für eine Suche.",
+_MATCH_TOOL = {
+    "name": "report_matches",
+    "description": "Welche vorhandenen Items des Ortes passen zur Suche?",
     "input_schema": {
         "type": "object",
         "properties": {
-            "found": {"type": "boolean"},
+            "item_ids": {"type": "array", "items": {"type": "string"}},
             "narration": {"type": "string"},
-            "item": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "category": {"type": "string",
-                                 "enum": ["food", "water", "tool", "material", "fuel", "medical", "misc"]},
-                    "weight_kg": {"type": "number"},
-                    "kcal_per_unit": {"type": ["number", "null"]},
-                    "decay_halflife_min": {"type": ["number", "null"]},
-                    "quantity": {"type": "number"},
-                },
-                "required": ["name", "category", "weight_kg", "quantity"],
-            },
         },
-        "required": ["found", "narration"],
+        "required": ["item_ids", "narration"],
     },
 }
 

@@ -133,6 +133,16 @@ def _seed_static(conn: sqlite3.Connection) -> None:
         "('generator',   'Stromgenerator', 'tool',  25.0, NULL, NULL, 0, 0, 0.0, NULL)",
         "('wifi_router', 'WLAN-Router',    'tool',   1.0, NULL, NULL, 0, 0, 0.0, NULL)",
         "('gasoline',    'Benzin 5L',      'fuel',   4.0, NULL, NULL, 1, 0, 0.0, NULL)",
+        # Loot-Tabellen (Issue #50): zusätzliche Alltagsgegenstände
+        "('canned_soup', 'Dose Eintopf',   'food',   0.40,  350, NULL, 1, 0, 0.0, NULL)",
+        "('crackers',    'Kekse/Zwieback', 'food',   0.25, 1050, NULL, 1, 0, 0.0, NULL)",
+        "('chocolate',   'Schokolade',     'food',   0.10,  540, NULL, 1, 0, 0.0, NULL)",
+        "('bandage',     'Verbandpäckchen','medical',0.05, NULL, NULL, 1, 0, 0.0, NULL)",
+        "('painkillers', 'Schmerztabletten','medical',0.02, NULL, NULL, 1, 0, 0.0, NULL)",
+        "('first_aid_kit','Erste-Hilfe-Set','medical',0.60, NULL, NULL, 0, 0, 0.0, NULL)",
+        "('hammer',      'Hammer',         'tool',    0.80, NULL, NULL, 0, 0, 0.0, NULL)",
+        "('rope',        'Seil 10m',       'material',1.00, NULL, NULL, 1, 0, 0.0, NULL)",
+        "('duct_tape',   'Gewebeband',     'material',0.30, NULL, NULL, 1, 0, 0.0, NULL)",
     ):
         conn.execute(
             "INSERT OR IGNORE INTO item_catalog (id, name, category, weight_kg, "

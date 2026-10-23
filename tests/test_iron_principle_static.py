@@ -164,3 +164,27 @@ class TestIronPrinciple:
                                 f"DB-Methode '{func.attr}' aufgerufen"
                             )
         assert not violations, "\n".join(violations)
+
+
+class TestNoLLMItemInvention:
+    """Issue #50: Kein LLM-Pfad darf neue Items/Mengen erzeugen."""
+
+    EFFECTS = ROOT / "app" / "sim" / "effects.py"
+
+    def test_effects_cannot_write_item_catalog(self):
+        src = self.EFFECTS.read_text(encoding="utf-8")
+        assert "item_catalog" not in src.replace("JOIN item_catalog", ""), (
+            "effects.py darf den Item-Katalog nicht beschreiben (LLM erfindet keine Items)."
+        )
+        assert "_materialize_item" not in src
+
+    def test_llm_contract_has_no_item_invention(self):
+        for p in LLM_DIR.glob("*.py"):
+            src = p.read_text(encoding="utf-8")
+            assert "search_item" not in src, f"{p.name}: alter Erfinde-Vertrag"
+            assert "weight_kg" not in src, f"{p.name}: LLM darf keine Item-Stammdaten liefern"
+
+    def test_search_only_matches_candidates(self):
+        """_a_search filtert die Backend-Antwort gegen die Kandidatenliste."""
+        src = self.EFFECTS.read_text(encoding="utf-8")
+        assert "i in by_id" in src

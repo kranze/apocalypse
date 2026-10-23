@@ -11,7 +11,6 @@ Vorbedingungen geprüft. Halluzinierte Ziele/Mengen werden abgelehnt.
 """
 from __future__ import annotations
 
-import hashlib
 import math
 import sqlite3
 from typing import Any
@@ -20,6 +19,7 @@ from ..llm import get_backend
 
 from . import (
     capabilities,
+    constants,
     generation,
     kb,
     looting,
@@ -28,13 +28,13 @@ from . import (
     resources,
     tick,
 )
+from .events import HALTING
 
 OPS = (
     "move_to", "discover", "transfer", "consume_food", "prepare", "search",
     "advance_time", "transform", "establish_capability", "narrate",
 )
 
-_CATEGORIES = {"food", "water", "tool", "material", "fuel", "medical", "misc"}
 _SEARCH_REACH_M = 40.0  # man durchsucht den Ort, an dem man steht
 
 _M_PER_DEG_LAT = 111_320.0
@@ -215,8 +215,34 @@ def _a_prepare(conn, char, eff, ctx):
 
 
 def _a_advance_time(conn, char, eff, ctx):
-    minutes = int(eff.get("minutes", 0)) or None
-    return tick.advance_tick(conn) if minutes is None else tick.advance_tick(conn, minutes)
+    """Zeit verstreichen lassen: geklemmt auf FREETEXT_MAX_MINUTES, in
+    TICK_MINUTES-Schritten (Rest als letzter Teilschritt). Bricht bei Tod oder
+    einem haltenden Interrupt ab. Ohne Minutenangabe: ein einzelner Tick."""
+    try:
+        requested = int(eff.get("minutes", 0) or 0)
+    except (TypeError, ValueError):
+        requested = 0
+    if requested <= 0:
+        r = tick.advance_tick(conn)
+        return {"ok": True, "tick": r["tick"], "minutes": constants.TICK_MINUTES,
+                "interrupts": r["interrupts"]}
+    minutes = min(requested, constants.FREETEXT_MAX_MINUTES)
+    spent, interrupts, now = 0, [], None
+    while spent < minutes:
+        step = min(constants.TICK_MINUTES, minutes - spent)
+        r = tick.advance_tick(conn, step)
+        spent += step
+        now = r["tick"]
+        interrupts += r["interrupts"]
+        alive = conn.execute(
+            "SELECT is_alive FROM characters WHERE id = ?;", (char,)
+        ).fetchone()
+        if alive is None or not alive["is_alive"]:
+            break
+        if any(i["severity"] in HALTING for i in r["interrupts"]):
+            break
+    return {"ok": True, "tick": now, "minutes": spent, "clamped": minutes != requested,
+            "interrupts": interrupts}
 
 
 def _a_transform(conn, char, eff, ctx):
@@ -269,7 +295,7 @@ def ledger_add(conn, item_id, delta):
     ledger.add(conn, item_id, delta)
 
 
-# --- Suche: plausibilitäts-geprüfte, dynamische Entdeckung ---------------
+# --- Suche: Abgleich gegen das generierte Inventar ------------------------
 def _discovered_here(conn, player):
     """Nächste ENTDECKTE Location, an der der Spieler steht (≤ Reichweite)."""
     if not player or player.get("lat") is None:
@@ -286,47 +312,6 @@ def _discovered_here(conn, player):
     return best
 
 
-_STOPWORDS = {
-    "ich", "du", "wir", "suche", "suchen", "such", "finde", "finden", "durchsuche",
-    "durchsuchen", "nach", "mal", "nochmal", "noch", "einen", "eine", "einem",
-    "einer", "ein", "den", "dem", "der", "die", "das", "hier", "etwas", "ob",
-    "es", "gibt", "im", "in", "am", "an", "auf", "bitte", "würde", "gern", "mir",
-    "schau", "stöbere", "kram",
-}
-
-
-def _norm_term(query: str) -> str:
-    """Reduziert eine Such-Eingabe auf den Kern (Füllwörter raus) für das
-    Anti-Farming, damit 'wasser' == 'ich suche nochmal wasser'."""
-    words = [w for w in "".join(c if c.isalnum() else " " for c in (query or "").lower()).split()
-             if w not in _STOPWORDS]
-    return " ".join(words)[:60] or (query or "").lower()[:60]
-
-
-def _slugify(name: str) -> str:
-    base = "".join(c if c.isalnum() else "_" for c in (name or "item").lower()).strip("_")[:24]
-    h = hashlib.sha1((name or "item").encode("utf-8")).hexdigest()[:6]
-    return f"{(base or 'item')}_{h}"
-
-
-def _materialize_item(conn, item, now_tick) -> tuple[str, int]:
-    """Legt ein von Claude erfundenes Item geklemmt im Katalog an. Returnt
-    (item_id, menge)."""
-    cat = item.get("category") if item.get("category") in _CATEGORIES else "misc"
-    weight = min(100.0, max(0.01, float(item.get("weight_kg") or 1.0)))
-    qty = int(min(50, max(1, round(float(item.get("quantity") or 1)))))
-    kcal = item.get("kcal_per_unit") if cat == "food" else None
-    decay = item.get("decay_halflife_min")
-    item_id = _slugify(item.get("name") or "fund")
-    conn.execute(
-        "INSERT OR IGNORE INTO item_catalog (id, name, category, weight_kg, "
-        "kcal_per_unit, decay_halflife_min, stackable, needs_preparation, "
-        "requires_water_l, prepared_into) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0.0, NULL);",
-        (item_id, (item.get("name") or item_id)[:60], cat, weight, kcal, decay),
-    )
-    return item_id, qty
-
-
 def _v_search(conn, char, eff, ctx):
     if not eff.get("query"):
         return (False, "no_query")
@@ -336,40 +321,45 @@ def _v_search(conn, char, eff, ctx):
 
 
 def _a_search(conn, char, eff, ctx):
+    """Freitext-Suche: löst dieselbe deterministische Generierung aus wie die
+    Klickaktion „Durchsuchen" und gleicht die Anfrage NUR gegen das vorhandene
+    Inventar des Ortes ab. Das LLM wählt aus der Kandidatenliste und erzählt;
+    es kann weder Items noch Mengen anlegen (Eisernes Prinzip)."""
     loc = _discovered_here(conn, ctx["player"])
     query = str(eff.get("query", "")).strip()
-    term = _norm_term(query)
-    now = conn.execute("SELECT tick FROM world WHERE id = 1;").fetchone()["tick"]
+    generation.ensure_generated(conn, loc["id"])
+    cands = [
+        dict(r) for r in conn.execute(
+            "SELECT li.item_id, ic.name, ic.category, SUM(li.quantity) AS quantity "
+            "FROM location_inventory li JOIN item_catalog ic ON ic.id = li.item_id "
+            "WHERE li.location_id = ? AND li.quantity > 0 "
+            "GROUP BY li.item_id ORDER BY li.item_id;",
+            (loc["id"],),
+        ).fetchall()
+    ]
+    where = loc["name"] or loc["label"] or loc["type"]
+    if not cands:
+        return {"ok": True, "found": False, "items": [], "location_id": loc["id"],
+                "narration": f"In {where} ist nichts Brauchbares (mehr) zu finden."}
 
-    if conn.execute(
-        "SELECT 1 FROM location_searches WHERE location_id = ? AND term = ?;",
-        (loc["id"], term),
-    ).fetchone():
-        return {"ok": True, "found": False, "exhausted": True,
-                "narration": "Hier hast du danach schon gesucht — nichts mehr."}
-
-    res = get_backend().search_item(
+    res = get_backend().match_items(
         query, {"type": loc["type"], "label": loc["label"], "name": loc["name"]},
-        ctx.get("profile"),
+        cands, ctx.get("profile"),
     )
-    with conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO location_searches (location_id, term, created_tick) "
-            "VALUES (?, ?, ?);", (loc["id"], term, now),
-        )
-        if not res.get("found") or not res.get("item"):
-            return {"ok": True, "found": False,
-                    "narration": res.get("narration") or "Hier gibt es so etwas nicht."}
-        item_id, qty = _materialize_item(conn, res["item"], now)
-        conn.execute(
-            "INSERT INTO location_inventory (location_id, item_id, quantity, quality, "
-            "produced_tick) VALUES (?, ?, ?, 1.0, ?);",
-            (loc["id"], item_id, float(qty), now),
-        )
-        ledger_add(conn, item_id, float(qty))
-    return {"ok": True, "found": True, "item": item_id, "quantity": qty,
-            "location_id": loc["id"],
-            "narration": res.get("narration") or f"Du findest {res['item'].get('name')}."}
+    by_id = {c["item_id"]: c for c in cands}
+    ids: list[str] = []
+    for i in res.get("item_ids") or []:  # nur Kandidaten zählen; Rest wird verworfen
+        if isinstance(i, str) and i in by_id and i not in ids:
+            ids.append(i)
+    narration = (res.get("narration") or "").strip()
+    if not ids:
+        return {"ok": True, "found": False, "items": [], "location_id": loc["id"],
+                "narration": narration or "Danach suchst du hier vergeblich."}
+    items = [{"item": i, "name": by_id[i]["name"], "quantity": by_id[i]["quantity"]}
+             for i in ids]
+    listing = ", ".join(f"{it['quantity']:g}x {it['name']}" for it in items)
+    return {"ok": True, "found": True, "items": items, "location_id": loc["id"],
+            "narration": (narration + " " if narration else "") + f"Vor Ort liegt: {listing}."}
 
 
 _VALIDATORS = {

@@ -234,8 +234,9 @@ CREATE TABLE capabilities (
 CREATE INDEX idx_cap_active ON capabilities(active);
 
 -- ---------------------------------------------------------------------------
--- DURCHSUCHTE BEGRIFFE je Location (Anti-Farming für die suchgetriebene Entdeckung)
--- Pro (Ort, Suchbegriff) wird einmal gesucht; danach ist dort 'nichts mehr'.
+-- DURCHSUCHT-Marker je Location (Issue #50)
+-- term = '*' bedeutet: Ort wurde durchsucht, sein Inventar ist aus den Loot-Tabellen
+-- generiert (einmalig, idempotent). Weitere Zeilen sind historische Suchbegriffe.
 -- ---------------------------------------------------------------------------
 CREATE TABLE location_searches (
     id              INTEGER PRIMARY KEY,
@@ -330,7 +331,16 @@ INSERT INTO item_catalog (id, name, category, weight_kg, kcal_per_unit, decay_ha
   ('firewood',      'Brennholz (Scheit)', 'fuel',     1.50,  NULL,  NULL,    1, 0, 0.0, NULL),
   ('generator',     'Stromgenerator',     'tool',    25.00,  NULL,  NULL,    0, 0, 0.0, NULL),
   ('wifi_router',   'WLAN-Router',        'tool',     1.00,  NULL,  NULL,    0, 0, 0.0, NULL),
-  ('gasoline',      'Benzin 5L',          'fuel',     4.00,  NULL,  NULL,    1, 0, 0.0, NULL);
+  ('gasoline',      'Benzin 5L',          'fuel',     4.00,  NULL,  NULL,    1, 0, 0.0, NULL),
+  ('canned_soup',   'Dose Eintopf',       'food',     0.40,  350,   NULL,    1, 0, 0.0, NULL),
+  ('crackers',      'Kekse/Zwieback',     'food',     0.25,  1050,  NULL,    1, 0, 0.0, NULL),
+  ('chocolate',     'Schokolade',         'food',     0.10,  540,   NULL,    1, 0, 0.0, NULL),
+  ('bandage',       'Verbandpäckchen',    'medical',  0.05,  NULL,  NULL,    1, 0, 0.0, NULL),
+  ('painkillers',   'Schmerztabletten',   'medical',  0.02,  NULL,  NULL,    1, 0, 0.0, NULL),
+  ('first_aid_kit', 'Erste-Hilfe-Set',    'medical',  0.60,  NULL,  NULL,    0, 0, 0.0, NULL),
+  ('hammer',        'Hammer',             'tool',     0.80,  NULL,  NULL,    0, 0, 0.0, NULL),
+  ('rope',          'Seil 10m',           'material', 1.00,  NULL,  NULL,    1, 0, 0.0, NULL),
+  ('duct_tape',     'Gewebeband',         'material', 0.30,  NULL,  NULL,    1, 0, 0.0, NULL);
 
 -- Welt-Singleton initialisieren (world_seed später vom App-Start gesetzt)
 INSERT INTO world (id, world_seed, tick, start_datetime, phase, survivor_sim_day)

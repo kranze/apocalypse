@@ -5,7 +5,7 @@ c) Adjudikator: nach adjudicate() mit Stub stehen player+narrator im chat_log;
    build_context enthaelt danach history mit den erwarteten Eintraegen.
 d) History-Fenster: nach >16 Turns liefert build_context["history"] hoechstens 16
    Eintraege, chronologisch aufsteigend.
-e) Backend-Signaturen: search_item/narrate_location akzeptieren history=[...] ohne
+e) Backend-Signaturen: match_items/narrate_location akzeptieren history=[...] ohne
    Fehler; Stub liefert bei gleicher Eingabe gleiche Ausgabe unabhaengig von history.
 f) Determinismus (existierendes Muster): zwei identische Laeufe → gleicher chat_log-Zustand.
 """
@@ -202,20 +202,26 @@ class TestHistoryWindow:
 # e) Backend-Signaturen: history-Parameter akzeptiert, Stub deterministisch
 # ---------------------------------------------------------------------------
 
+CANDS = [
+    {"item_id": "water_1l", "name": "Wasser 1L", "category": "water", "quantity": 3.0},
+    {"item_id": "canned_beans", "name": "Dose Bohnen", "category": "food", "quantity": 2.0},
+]
+
+
 class TestBackendSignatures:
-    def test_search_item_accepts_history_param(self):
-        """search_item(history=[...]) laeuft ohne Fehler."""
+    def test_match_items_accepts_history_param(self):
+        """match_items(history=[...]) laeuft ohne Fehler."""
         backend = llm_mod.get_backend()
         history = [{"turn": 1, "role": "player", "text": "ich suche wasser"}]
         loc = {"type": "house", "name": "Test-Haus"}
-        result = backend.search_item("wasser", loc, profile=None, history=history)
+        result = backend.match_items("wasser", loc, CANDS, profile=None, history=history)
         assert isinstance(result, dict)
 
-    def test_search_item_accepts_none_history(self):
-        """search_item(history=None) laeuft ohne Fehler."""
+    def test_match_items_accepts_none_history(self):
+        """match_items(history=None) laeuft ohne Fehler."""
         backend = llm_mod.get_backend()
         loc = {"type": "house", "name": "Test-Haus"}
-        result = backend.search_item("wasser", loc, profile=None, history=None)
+        result = backend.match_items("wasser", loc, CANDS, profile=None, history=None)
         assert isinstance(result, dict)
 
     def test_narrate_location_accepts_history_param(self):
@@ -233,17 +239,17 @@ class TestBackendSignatures:
         result = backend.narrate_location(loc, profile=None, history=None)
         assert isinstance(result, str)
 
-    def test_stub_search_item_deterministic_regardless_of_history(self):
+    def test_stub_match_items_deterministic_regardless_of_history(self):
         """Stub liefert bei gleicher Eingabe gleiche Ausgabe, egal ob history oder nicht."""
         backend = llm_mod.get_backend()
         loc = {"type": "house", "name": "Test-Haus"}
 
-        result_no_history = backend.search_item("wasser", loc)
-        result_with_history = backend.search_item(
-            "wasser", loc,
+        result_no_history = backend.match_items("wasser", loc, CANDS)
+        result_with_history = backend.match_items(
+            "wasser", loc, CANDS,
             history=[{"turn": 1, "role": "player", "text": "ich suche wasser"}]
         )
-        assert result_no_history["found"] == result_with_history["found"]
+        assert result_no_history["item_ids"] == result_with_history["item_ids"]
         assert result_no_history["narration"] == result_with_history["narration"]
 
     def test_stub_narrate_location_deterministic_regardless_of_history(self):
@@ -258,20 +264,17 @@ class TestBackendSignatures:
         )
         assert result_no_history == result_with_history
 
-    def test_stub_search_item_returns_found_and_item(self):
-        """Stub gibt bei bekanntem Keyword + passendem Ortstyp found=True zurueck."""
+    def test_stub_match_items_returns_matching_candidate(self):
+        """Stub waehlt bei passendem Keyword nur Kandidaten aus der Liste."""
         backend = llm_mod.get_backend()
-        loc = {"type": "house"}
-        result = backend.search_item("wasser", loc)
-        assert result["found"] is True
-        assert result["item"] is not None
+        result = backend.match_items("wasser", {"type": "house"}, CANDS)
+        assert result["item_ids"] == ["water_1l"]
 
-    def test_stub_search_item_unknown_query_not_found(self):
-        """Stub gibt bei unbekanntem Keyword found=False zurueck."""
+    def test_stub_match_items_unknown_query_no_match(self):
+        """Stub gibt bei unbekanntem Keyword keine Items zurueck."""
         backend = llm_mod.get_backend()
-        loc = {"type": "house"}
-        result = backend.search_item("einhorn", loc)
-        assert result["found"] is False
+        result = backend.match_items("einhorn", {"type": "house"}, CANDS)
+        assert result["item_ids"] == []
 
 
 # ---------------------------------------------------------------------------

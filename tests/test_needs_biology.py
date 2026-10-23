@@ -212,16 +212,30 @@ class TestApplySleep:
         assert sleep >= 0.0
 
     def test_sleep_interrupt_at_soft_threshold(self, conn):
-        """Interrupt, wenn Schlaf unter HUNGER_SOFT fällt."""
+        """Interrupt, wenn Schlaf unter HUNGER_SOFT fällt (Charakter unterwegs)."""
         from app.sim import constants as C
         above = C.HUNGER_SOFT + 0.01
-        conn.execute("UPDATE characters SET sleep=? WHERE id=1;", (above,))
+        conn.execute("UPDATE characters SET sleep=?, path_json='[]' WHERE id=1;", (above,))
         conn.commit()
         loss_needed = 0.02
         minutes = int(loss_needed * C.MINUTES_PER_DAY / C.SLEEP_LOSS_PER_DAY) + 1
         with conn:
             interrupts = apply_sleep(conn, minutes, minutes)
         assert any(i["category"] == "need" for i in interrupts)
+
+    def test_no_tiredness_interrupt_when_resting_or_idle(self, conn):
+        """Ruhende/untätige Charaktere (Auto-Ruhen erholt sofort) melden keine
+        Müdigkeit — sonst pendelt die Warnung um die Schwelle."""
+        from app.sim import constants as C
+        conn.execute("UPDATE characters SET sleep=? WHERE id=1;", (C.HUNGER_SOFT + 0.01,))
+        conn.commit()
+        minutes = int(0.02 * C.MINUTES_PER_DAY / C.SLEEP_LOSS_PER_DAY) + 1
+        with conn:
+            assert apply_sleep(conn, minutes, minutes) == []  # untätig
+        conn.execute("UPDATE characters SET sleep=?, path_json='[]' WHERE id=1;", (C.HUNGER_SOFT + 0.01,))
+        conn.commit()
+        with conn:
+            assert apply_sleep(conn, minutes, minutes, resting={1}) == []
 
     def test_dead_chars_not_affected(self, conn):
         """Tote Charaktere erhalten keinen Schlafdruck."""

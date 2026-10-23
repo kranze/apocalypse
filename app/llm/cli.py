@@ -104,33 +104,26 @@ class CliBackend(LLMBackend):
             narration=out.get("narration", ""),
         )
 
-    # --- search_item ---------------------------------------------------
-    def search_item(self, query, location, profile=None, history=None) -> dict[str, Any]:
+    # --- match_items ---------------------------------------------------
+    def match_items(self, query, location, candidates, profile=None, history=None) -> dict[str, Any]:
         history_block = _history_compact(history)
         prompt = (
-            "Der Spieler durchsucht einen Ort einer Endzeit-Welt. Beurteile "
-            "realistisch, ob sich das Gesuchte DORT fände; wenn ja, erfinde EIN "
-            "konkretes plausibles Objekt. Antworte NUR mit JSON:\n"
-            "{\"found\": bool, \"narration\": str(kurz, deutsch), \"item\": "
-            "{\"name\": str, \"category\": \"food|water|tool|material|fuel|medical|misc\", "
-            "\"weight_kg\": number, \"kcal_per_unit\"?: number, \"quantity\": number}}\n\n"
+            "Der Spieler durchsucht einen Ort einer Endzeit-Welt. Der Ort hat ein "
+            "festes Inventar (Kandidaten). Wähle daraus die zur Suche passenden "
+            "Items (NUR item_id aus der Liste; keins passt -> leere Liste), "
+            "erfinde nichts und nenne keine Mengen. Antworte NUR mit JSON:\n"
+            "{\"item_ids\": [str], \"narration\": str(kurz, deutsch)}\n\n"
             + (history_block + "\n\n" if history_block else "")
             + f"Suche: {query!r}\n"
             f"Ort: {json.dumps({'art': location.get('label') or location.get('type'), 'name': location.get('name')}, ensure_ascii=False)}\n"
+            f"Kandidaten: {json.dumps([{'item_id': c['item_id'], 'name': c['name']} for c in candidates], ensure_ascii=False)}\n"
             f"Person: {json.dumps(profile, ensure_ascii=False)}"
         )
         out = self._json(prompt)
         if not out:
-            return self._fallback.search_item(query, location, profile)
-        if not out.get("found") or not isinstance(out.get("item"), dict):
-            return {"found": False, "narration": out.get("narration", ""), "item": None}
-        it = out["item"]
-        return {"found": True, "narration": out.get("narration", ""), "item": {
-            "name": it.get("name"), "category": it.get("category"),
-            "weight_kg": it.get("weight_kg"), "kcal_per_unit": it.get("kcal_per_unit"),
-            "decay_halflife_min": it.get("decay_halflife_min"),
-            "quantity": it.get("quantity", 1),
-        }}
+            return self._fallback.match_items(query, location, candidates, profile)
+        return {"item_ids": [i for i in (out.get("item_ids") or []) if isinstance(i, str)],
+                "narration": out.get("narration", "")}
 
     # --- narrate_location ----------------------------------------------
     def narrate_location(self, location, profile=None, history=None) -> str:

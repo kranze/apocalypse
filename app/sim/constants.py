@@ -9,6 +9,29 @@ from __future__ import annotations
 TICK_MINUTES = 10        # Spielminuten, um die ein advance_tick() vorrückt
 MINUTES_PER_DAY = 1440
 
+# --- Aktionsbasierte Zeit (Slice M1) -------------------------------------
+# Jede Spieleraktion kostet Spielminuten; danach rückt die Welt exakt um diese
+# Spanne vor (in TICK_MINUTES-Schritten, Rest als letzter Teilschritt).
+DAYS_TOTAL = 7                   # Länge der Überlebens-Woche
+WALK_MAX_MINUTES = 360           # eine Geh-Aktion läuft höchstens so lange
+LOOT_MIN_MINUTES = 20            # Plündern: kleines Gebäude ...
+LOOT_MAX_MINUTES = 60            # ... großes Gebäude
+LOOT_FOOTPRINT_MIN_M2 = 20.0     # Footprint, ab dem LOOT_MIN gilt
+LOOT_FOOTPRINT_MAX_M2 = 500.0    # Footprint, ab dem LOOT_MAX gilt
+LOOT_REACH_M = 40.0              # Plündern nur, wenn man am Gebäude steht
+SEARCH_MIN_MINUTES = 15          # Durchsuchen: kleines Gebäude ... (Footprint wie beim Plündern)
+SEARCH_MAX_MINUTES = 45          # ... großes Gebäude
+EAT_MINUTES = 15
+PREPARE_MINUTES = 30
+WAIT_MIN_MINUTES = 10
+WAIT_MAX_MINUTES = 1440          # 24 h, damit "Bis morgen früh" immer passt
+WAKE_HOUR = 7                    # "Bis morgen früh" = nächste 07:00 Spielzeit
+SLEEP_TARGET = 0.95              # Schlafen endet, sobald so ausgeruht
+SLEEP_MAX_MINUTES = 720
+FREETEXT_DEFAULT_MINUTES = 15    # Freitext ohne eigene Zeitkosten
+FREETEXT_MAX_MINUTES = 240       # Klemme für advance_time-Effekte
+ARRIVE_REACH_M = 15.0            # so nah am Ziel gilt man als "dort"
+
 # --- Hunger -------------------------------------------------------------
 # Sättigung 0..1 (1 = satt). Ohne Nahrung in ~3 Spieltagen von 1.0 auf 0.
 HUNGER_LOSS_PER_DAY = 0.33

@@ -115,6 +115,16 @@ def set_destination(
     return {"ok": True, "path": waypoints, "distance_m": round(distance, 1)}
 
 
+def clear_destination(conn: sqlite3.Connection, character_id: int) -> None:
+    """Bricht eine laufende Route ab (Spieler bleibt stehen). Atomar."""
+    with conn:
+        conn.execute(
+            "UPDATE characters SET dest_lat = NULL, dest_lon = NULL, "
+            "path_json = NULL WHERE id = ? AND path_json IS NOT NULL;",
+            (character_id,),
+        )
+
+
 def advance_movement(conn: sqlite3.Connection, minutes: int, now_tick: int) -> dict:
     """Lässt alle laufenden Charaktere um WALK_SPEED * minutes entlang ihres
     Pfads laufen. Liefert {char_id: gelaufene_distanz_m, "_interrupts": [...]}."""

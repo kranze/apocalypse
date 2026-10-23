@@ -12,6 +12,7 @@ world_seed reproduzierbar.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Collection
 from typing import Any
 
 from .. import config
@@ -20,9 +21,16 @@ from .events import HALTING
 
 
 def advance_tick(
-    conn: sqlite3.Connection, minutes: int = constants.TICK_MINUTES
+    conn: sqlite3.Connection,
+    minutes: int = constants.TICK_MINUTES,
+    *,
+    resting: Collection[int] | None = None,
 ) -> dict[str, Any]:
-    """Ein Tick. Gibt neuen Tick-Stand + emittierte Interrupts zurück."""
+    """Ein Tick. Gibt neuen Tick-Stand + emittierte Interrupts zurück.
+
+    ``resting``: Charakter-IDs, die in diesem Tick explizit schlafen (Aktion
+    „Schlafen“) und daher unabhängig von SLEEP_REST_BELOW Schlaf erholen.
+    """
     interrupts: list[dict[str, Any]] = []
     with conn:  # eine Transaktion pro Tick
         world = conn.execute(
@@ -66,8 +74,8 @@ def advance_tick(
         #            -> Performance -> Sterbe-Check
         interrupts += biology.apply_hunger(conn, minutes, t1, distances)
         interrupts += biology.apply_thirst(conn, minutes, t1, distances)
-        interrupts += biology.apply_sleep(conn, minutes, t1)
-        interrupts += provision.auto_provision(conn, minutes, t1)
+        interrupts += biology.apply_sleep(conn, minutes, t1, resting)
+        interrupts += provision.auto_provision(conn, minutes, t1, resting)
         biology.recompute_satisfaction(conn, minutes)
         biology.recompute_performance(conn)
         interrupts += biology.death_check(conn, t1, minutes, seed)
