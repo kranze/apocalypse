@@ -21,6 +21,7 @@ from typing import Any, Callable
 
 from . import (
     adjudicator,
+    companion,
     constants,
     devices,
     effects,
@@ -132,13 +133,14 @@ def _ignore_while_sleeping(event: dict) -> bool:
 
 
 def _advance(conn, cid: int, minutes: int, resting: bool = False) -> dict[str, Any]:
-    """tick.advance_tick, aber Bedürfnis-Events anderer Charaktere (NPCs)
-    erreichen den Spieler nicht als Interrupts (sie bleiben in der events-Tabelle)."""
+    """tick.advance_tick, aber Bedürfnis- und Ankunfts-Events anderer Charaktere (NPCs)
+    erreichen den Spieler nicht als Interrupts (sie bleiben in der events-Tabelle).
+    Companion-Events (Kategorie ``companion``) kommen durch."""
     r = tick.advance_tick(conn, minutes, resting={cid} if resting else None)
     r["interrupts"] = [
         e for e in r["interrupts"]
         if not (
-            e.get("category") == "need" and e.get("subject_type") == "character"
+            e.get("category") in ("need", "world") and e.get("subject_type") == "character"
             and e.get("subject_id") not in (None, cid)
         )
     ]
@@ -662,12 +664,17 @@ def _do_search_survivors(conn, cid, action) -> dict[str, Any]:
     rec = online.record_search(conn, ctx["net"]["quality"], _tick_now(conn))
     events = list(adv["events"])
     if rec["reply"]:
-        # Haken für #48: die Antwort steht in online_contacts (handled = 0).
-        with conn:
-            events.append(emit_event(
-                conn, _tick_now(conn), "contact", "Jemand hat geantwortet…",
-                severity=DECISION, subject_type="character", subject_id=cid,
-                payload={"text": rec["reply"]}))
+        # #48: Die Antwort steht in online_contacts (handled = 0); der erste Kontakt
+        # macht einen Überlebenden zum Companion (inkl. Treffpunkt + Interrupt).
+        contact = companion.on_contact(conn, "reply", text=rec["reply"])
+        if contact:
+            events += contact
+        else:
+            with conn:
+                events.append(emit_event(
+                    conn, _tick_now(conn), "contact", "Jemand hat geantwortet…",
+                    severity=DECISION, subject_type="character", subject_id=cid,
+                    payload={"text": rec["reply"]}))
         narration = (f"Du suchst nach anderen Überlebenden. Jemand hat geantwortet. "
                      f"{rec['reply']}")
     else:
@@ -745,6 +752,84 @@ def _do_charge(conn, cid, action) -> dict[str, Any]:
         events=adv["events"], result={"source": plan["source"], "charged": done},
         narration=f"Du lädst {src} ({_duration(adv['spent'])}): {listing}.",
     )
+
+
+# --- Companion (Slice M4, Issue #48) --------------------------------------
+_GIVE_MINUTES = 2
+_COMPANION_HINTS = {
+    "companion_not_here": "Niemand ist in Hörweite.",
+    "shared_inventory": "Ihr teilt euren Besitz bereits.",
+    "unknown_item": "Diesen Gegenstand gibt es nicht.",
+    "not_owned": "Das hast du nicht.",
+}
+
+
+def _do_talk(conn, cid, action) -> dict[str, Any]:
+    """Mit dem Companion sprechen (10 min). Rede + Intentionen kommen vom LLM-Backend;
+    jede Intention validiert/wendet der Sim-Kern (``companion.converse``)."""
+    if companion.here(conn, cid) is None:
+        return _reject(conn, "talk", cid, "companion_not_here",
+                       _COMPANION_HINTS["companion_not_here"])
+    text = (action.get("text") or "").strip()
+    if not text:
+        return _reject(conn, "talk", cid, "no_text", "Was möchtest du sagen?")
+    movement.clear_destination(conn, cid)
+    res = companion.converse(conn, text)
+    adv = advance_world(conn, cid, constants.COMPANION_TALK_MINUTES)
+    return _response(
+        conn, "talk", cid, minutes_spent=adv["spent"], stopped=adv["stopped"],
+        events=res["events"] + adv["events"],
+        result={"speech": res["speech"], "intents_applied": res["intents_applied"],
+                "intents_rejected": res["intents_rejected"],
+                "companion": companion.view(conn)},
+    )
+
+
+def _do_give(conn, cid, action) -> dict[str, Any]:
+    """Dem Companion einen Gegenstand aus dem Gruppen-Inventar geben (Transfer)."""
+    res = companion.give_to_companion(conn, action.get("item_id"))
+    if not res.get("ok"):
+        reason = res.get("reason", "failed")
+        return _reject(conn, "give", cid, reason,
+                       _COMPANION_HINTS.get(reason, "Das geht gerade nicht."))
+    adv = advance_world(conn, cid, _GIVE_MINUTES)
+    return _response(
+        conn, "give", cid, minutes_spent=adv["spent"], stopped=adv["stopped"],
+        events=adv["events"], result={**res, "companion": companion.view(conn)},
+        narration=f"Du gibst {res['qty']:g}x {res['item_name']} ab.",
+    )
+
+
+def _companion_actions(conn, cid, gid) -> list[dict[str, Any]]:
+    """Aktionsleiste: Treffpunkt ansteuern, mit dem Companion sprechen/ihm etwas geben."""
+    row = companion.get(conn)
+    if row is None:
+        return []
+    out: list[dict[str, Any]] = []
+    v = companion.view(conn)
+    if row["stage"] in ("contacted", "approaching") and v["meeting_point"]:
+        me = conn.execute("SELECT lat, lon FROM characters WHERE id = ?;", (cid,)).fetchone()
+        mp = v["meeting_point"]
+        dist = effects._dist(me["lat"], me["lon"], mp["lat"], mp["lon"]) if me["lat"] is not None else 0.0
+        out.append({"kind": "walk", "label": "Zum Treffpunkt gehen",
+                    "location_id": mp["location_id"],
+                    "minutes": math.ceil(dist / constants.WALK_SPEED_M_PER_MIN)})
+    if companion.here(conn, cid) is not None:
+        out.append({"kind": "talk", "label": f"Mit {v['name']} sprechen",
+                    "minutes": constants.COMPANION_TALK_MINUTES})
+        if row["stage"] == "met":
+            options = [
+                {"item_id": r["item_id"], "name": r["name"], "quantity": r["q"]}
+                for r in conn.execute(
+                    "SELECT gi.item_id, ic.name, SUM(gi.quantity) AS q FROM group_inventory gi "
+                    "JOIN item_catalog ic ON ic.id = gi.item_id WHERE gi.group_id = ? "
+                    "AND ic.category IN ('food', 'water') AND gi.quantity > 0 "
+                    "GROUP BY gi.item_id ORDER BY ic.name;", (gid,)).fetchall()
+            ]
+            if options:
+                out.append({"kind": "give", "label": f"{v['name']} etwas geben",
+                            "minutes": _GIVE_MINUTES, "options": options})
+    return out
 
 
 # --- Freitext -----------------------------------------------------------
@@ -835,6 +920,8 @@ _HANDLERS = {
     "search_survivors": _do_search_survivors,
     "download": _do_download,
     "charge": _do_charge,
+    "talk": _do_talk,
+    "give": _do_give,
     "freetext": _do_freetext,
 }
 
@@ -975,6 +1062,7 @@ def available(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]:
             })
 
     actions.extend(_online_actions(conn, character_id, gid, here))
+    actions.extend(_companion_actions(conn, character_id, gid))
 
     actions.append({"kind": "wait", "label": "1 Std. warten", "minutes": 60})
     until_morning = minutes_until_morning(conn)

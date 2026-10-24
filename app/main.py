@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from . import config, db
 from .osm import loader
 from .sim import (
-    actions as actions_mod, adjudicator, online, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
+    actions as actions_mod, adjudicator, companion as companion_mod, online, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
 from .sim import chunks as chunks_mod
 from .sim import survivor_sim, survivors as survivors_mod
@@ -311,6 +311,41 @@ def get_chat(character_id: int = Query(1), limit: int = Query(40)) -> list[dict]
     conn = db.get_connection()
     try:
         return chatlog.recent(conn, character_id, limit)
+    finally:
+        conn.close()
+
+
+@app.get("/companion")
+def get_companion() -> dict | None:
+    """Der Companion (Vertrag Issue #48) oder ``null``, solange es keinen Kontakt gibt."""
+    conn = db.get_connection()
+    try:
+        return companion_mod.view(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/companion/chat")
+def get_companion_chat(limit: int = Query(40)) -> list[dict]:
+    """Gespräch mit dem Companion: [{role: player|companion|narrator, text, tick}]."""
+    conn = db.get_connection()
+    try:
+        return companion_mod.chat(conn, limit)
+    finally:
+        conn.close()
+
+
+@app.post("/survivors/{character_id}/meet")
+def survivor_meet(character_id: int) -> dict:
+    """Begegnung (#16): reichert einen materialisierten Survivor einmalig mit
+    Persönlichkeit/Kurzbiografie an (idempotent; Claude schlägt vor, der Kern speichert)."""
+    conn = db.get_connection()
+    try:
+        with conn:
+            profile = survivors_mod.enrich_on_encounter(conn, character_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Kein Survivor-Charakter")
+        return profile
     finally:
         conn.close()
 

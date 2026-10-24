@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from ..osm import geocode
-from . import biology, chatlog, constants, devices, ledger, online, survivors
+from . import biology, chatlog, companion, constants, devices, ledger, online, survivors
 
 INTRO = (
     "Du wachst auf. Es ist still — vollkommen still.\n"
@@ -92,6 +92,7 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
     # 4b) Online-Zustand zurücksetzen, Startausrüstung: ein Smartphone (80 %).
     #     Das Item ist ledgergebucht (Quelle); der Akkustand ist kein Ledger-Gut.
     online.reset_online_state(conn)
+    companion.reset(conn)
     with conn:
         conn.execute(
             "INSERT INTO group_inventory (group_id, item_id, quantity, quality, acquired_tick) "

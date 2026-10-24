@@ -103,6 +103,10 @@ def advance(conn, minutes: int, now_tick: int, seed: int) -> list[dict[str, Any]
         if cap["ctype"] == "ssid_beacon":
             p = constants.BEACON_CONTACT_PER_DAY * (minutes / constants.MINUTES_PER_DAY)
             if roll(seed, "beacon", cap["id"], now_tick) < p:
+                # Haken für den Companion (#48): offener Kontakt, Phase 4 setzt ihn um.
+                conn.execute(
+                    "INSERT INTO online_contacts (tick, kind, text) VALUES (?, 'beacon', ?);",
+                    (now_tick, "Ein schwaches Funksignal antwortet auf deinen Beacon."))
                 interrupts.append(emit_event(
                     conn, now_tick, "world",
                     "Ein schwaches Funksignal antwortet auf deinen Beacon.",

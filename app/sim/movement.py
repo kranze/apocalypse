@@ -71,47 +71,55 @@ def set_destination(
     """Berechnet die Fußroute von der aktuellen Position zum Ziel und speichert
     die verbleibenden Wegpunkte. Atomar."""
     with conn:
-        char = conn.execute(
-            "SELECT id, lat, lon, home_lat, home_lon FROM characters "
-            "WHERE id = ? AND is_alive = 1;",
-            (character_id,),
-        ).fetchone()
-        if char is None:
-            return {"ok": False, "reason": "no_such_living_character"}
-        if char["lat"] is None or char["lon"] is None:
-            return {"ok": False, "reason": "no_position"}
+        return route_to(conn, character_id, lat, lon)
 
-        # Korridor-Chunks entlang der Luftlinie Start→Ziel vorladen (begrenzt auf cap=8).
-        # Fehler werden ignoriert (Fallback auf Luftlinie bleibt).
-        _ensure_corridor_roads(
-            char["lat"], char["lon"], lat, lon, cap=8
-        )
 
-        # Graph: anchor_lat/lon des Spielers (rückwärtskompatibel, monkeypatching in Tests).
-        anchor_lat = char["home_lat"] if char["home_lat"] is not None else char["lat"]
-        anchor_lon = char["home_lon"] if char["home_lon"] is not None else char["lon"]
-        graph = roads.get_graph(anchor_lat, anchor_lon)
-        start = graph.nearest_node(char["lat"], char["lon"])
-        goal = graph.nearest_node(lat, lon)
-        if start is None or goal is None:
-            # Kein Straßennetz -> Luftlinie als Fallback.
+def route_to(
+    conn: sqlite3.Connection, character_id: int, lat: float, lon: float
+) -> dict[str, Any]:
+    """Wie ``set_destination``, aber ohne eigenes Commit — für Aufrufer, die schon
+    in einer Transaktion laufen (z.B. der Agenten-Tick in Phase 4)."""
+    char = conn.execute(
+        "SELECT id, lat, lon, home_lat, home_lon FROM characters "
+        "WHERE id = ? AND is_alive = 1;",
+        (character_id,),
+    ).fetchone()
+    if char is None:
+        return {"ok": False, "reason": "no_such_living_character"}
+    if char["lat"] is None or char["lon"] is None:
+        return {"ok": False, "reason": "no_position"}
+
+    # Korridor-Chunks entlang der Luftlinie Start→Ziel vorladen (begrenzt auf cap=8).
+    # Fehler werden ignoriert (Fallback auf Luftlinie bleibt).
+    _ensure_corridor_roads(
+        char["lat"], char["lon"], lat, lon, cap=8
+    )
+
+    # Graph: anchor_lat/lon des Spielers (rückwärtskompatibel, monkeypatching in Tests).
+    anchor_lat = char["home_lat"] if char["home_lat"] is not None else char["lat"]
+    anchor_lon = char["home_lon"] if char["home_lon"] is not None else char["lon"]
+    graph = roads.get_graph(anchor_lat, anchor_lon)
+    start = graph.nearest_node(char["lat"], char["lon"])
+    goal = graph.nearest_node(lat, lon)
+    if start is None or goal is None:
+        # Kein Straßennetz -> Luftlinie als Fallback.
+        waypoints = [[lat, lon]]
+        distance = roads._dist_m((char["lat"], char["lon"]), (lat, lon))
+    else:
+        coords, dist = graph.shortest_path(start, goal)
+        if not coords:
             waypoints = [[lat, lon]]
             distance = roads._dist_m((char["lat"], char["lon"]), (lat, lon))
         else:
-            coords, dist = graph.shortest_path(start, goal)
-            if not coords:
-                waypoints = [[lat, lon]]
-                distance = roads._dist_m((char["lat"], char["lon"]), (lat, lon))
-            else:
-                # Graph-Pfad + exaktes Klickziel als letzte Wegmarke.
-                waypoints = [[la, lo] for la, lo in coords] + [[lat, lon]]
-                distance = dist
+            # Graph-Pfad + exaktes Klickziel als letzte Wegmarke.
+            waypoints = [[la, lo] for la, lo in coords] + [[lat, lon]]
+            distance = dist
 
-        conn.execute(
-            "UPDATE characters SET dest_lat = ?, dest_lon = ?, path_json = ? "
-            "WHERE id = ?;",
-            (lat, lon, json.dumps(waypoints), character_id),
-        )
+    conn.execute(
+        "UPDATE characters SET dest_lat = ?, dest_lon = ?, path_json = ? "
+        "WHERE id = ?;",
+        (lat, lon, json.dumps(waypoints), character_id),
+    )
     return {"ok": True, "path": waypoints, "distance_m": round(distance, 1)}
 
 

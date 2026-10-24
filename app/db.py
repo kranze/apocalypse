@@ -90,6 +90,19 @@ _MIGRATIONS = (
     "CREATE TABLE IF NOT EXISTS online_contacts ("
     " id INTEGER PRIMARY KEY, tick INTEGER NOT NULL, kind TEXT NOT NULL,"
     " text TEXT, handled INTEGER NOT NULL DEFAULT 0);",
+    "CREATE TABLE IF NOT EXISTS companion_state ("
+    " id INTEGER PRIMARY KEY CHECK (id = 1), character_id INTEGER NOT NULL,"
+    " group_id INTEGER, stage TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'wait',"
+    " trust REAL NOT NULL DEFAULT 0.15, opinion TEXT NOT NULL DEFAULT 'undecided',"
+    " meeting_location_id INTEGER, contact_source TEXT, contact_tick INTEGER,"
+    " met_tick INTEGER, joined_tick INTEGER, left_tick INTEGER, last_tick INTEGER,"
+    " last_summary_day INTEGER NOT NULL DEFAULT -1, talk_day INTEGER NOT NULL DEFAULT -1,"
+    " talk_trust_today REAL NOT NULL DEFAULT 0.0, request_item TEXT, request_tick INTEGER);",
+    "CREATE TABLE IF NOT EXISTS survivor_profile ("
+    " character_id INTEGER PRIMARY KEY, personality TEXT, short_bio TEXT,"
+    " demeanor TEXT, created_tick INTEGER);",
+    "CREATE TABLE IF NOT EXISTS companion_memory ("
+    " day INTEGER PRIMARY KEY, text TEXT NOT NULL);",
 )
 
 # (tabelle, spalte, DDL-Definition) — nur angelegt, wenn die Spalte fehlt.

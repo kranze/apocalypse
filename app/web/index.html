@@ -10,7 +10,7 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   />
-  <link rel="stylesheet" href="/style.css?v=10" />
+  <link rel="stylesheet" href="/style.css?v=11" />
 </head>
 <body>
   <div id="map"></div>
@@ -48,6 +48,24 @@
     </div>
     <ul id="roster-list" class="hidden"></ul>
 
+    <div id="companion-block" class="hidden">
+      <div class="row">
+        <button id="btn-companion" class="toggle">▸ Begleiter</button>
+        <span id="companion-stage" class="count"></span>
+      </div>
+      <div id="companion-body" class="hidden">
+        <div class="row" id="companion-name"></div>
+        <div class="row needs hidden" id="companion-bio"></div>
+        <div class="needbar"><label>Hunger</label><div class="bar"><span id="cp-hunger-fill"></span></div><span id="cp-hunger-val" class="val">—</span></div>
+        <div class="needbar"><label>Durst</label><div class="bar"><span id="cp-thirst-fill"></span></div><span id="cp-thirst-val" class="val">—</span></div>
+        <div class="needbar"><label>Schlaf</label><div class="bar"><span id="cp-sleep-fill"></span></div><span id="cp-sleep-val" class="val">—</span></div>
+        <div class="needbar"><label>Vertrauen</label><div class="bar"><span id="cp-trust-fill"></span></div><span id="cp-trust-val" class="val">—</span></div>
+        <div class="row needs" id="companion-opinion"></div>
+        <h2>Gespräch</h2>
+        <div id="companion-chat"></div>
+      </div>
+    </div>
+
     <h2>Rucksack <span id="carry" class="count"></span></h2>
     <ul id="inventory"><li class="empty">leer</li></ul>
 
@@ -55,6 +73,7 @@
     <div id="chat"></div>
     <div id="actionbar" class="actionbar"></div>
     <div id="dl-chooser" class="dl-chooser hidden"></div>
+    <div id="talk-indicator" class="talk-indicator hidden"><span id="talk-name">Gespräch</span><button id="talk-cancel" title="Zurück (Esc)">✕</button></div>
     <div class="row cmdrow">
       <input id="cmd" type="text" placeholder="Was tust du? (z. B. ich suche Wasser)" autocomplete="off" />
       <button id="btn-cmd">▶</button>
@@ -122,6 +141,6 @@
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
   ></script>
-  <script src="/app.js?v=12"></script>
+  <script src="/app.js?v=13"></script>
 </body>
 </html>

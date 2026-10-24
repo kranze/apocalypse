@@ -20,7 +20,7 @@ import subprocess
 from typing import Any
 
 from . import lore
-from .base import EFFECT_OPS, FEASIBILITY, LLMBackend, proposal
+from .base import COMPANION_INTENTS, EFFECT_OPS, FEASIBILITY, LLMBackend, proposal
 from .stub import RuleBackend
 
 _CLI = os.environ.get("WASTELAND_CLAUDE_CLI", "claude")
@@ -167,6 +167,44 @@ class CliBackend(LLMBackend):
                     return {"stop": "finish"}
             transcript.append({"round": len(transcript) + 1, "calls": round_log})
         return {"stop": "limit"}
+
+    # --- Companion (Slice M4): reines JSON, Fallback Stub ----------------------
+    def companion_reply(self, persona, memory, context, player_text) -> dict[str, Any]:
+        prompt = (
+            lore.companion_system()
+            + "\n\nAntworte AUSSCHLIESSLICH mit einem JSON-Objekt: {\"speech\": str, "
+            "\"intents\": [{\"intent\": str, \"item_id\"?: str, \"qty\"?: number, "
+            "\"topic\"?: str}]}. Erlaubte intent-Werte: "
+            + ", ".join(COMPANION_INTENTS) + ".\n\n"
+            + json.dumps({"persona": persona, "memory": memory, "context": context,
+                          "spieler_sagt": player_text}, ensure_ascii=False)
+        )
+        out = self._json(prompt)
+        if not out or not isinstance(out.get("speech"), str):
+            return self._fallback.companion_reply(persona, memory, context, player_text)
+        intents = [i for i in (out.get("intents") or []) if isinstance(i, dict)]
+        return {"speech": out["speech"], "intents": intents}
+
+    def describe_survivor(self, identity, context, history=None) -> dict[str, Any]:
+        prompt = (
+            "Erfinde Persönlichkeit und Kurzbiografie (je 1-2 Sätze, deutsch) für einen "
+            "Überlebenden einer Endzeit-Welt, passend zur Identität. Antworte NUR mit JSON: "
+            "{\"personality\": str, \"short_bio\": str, \"demeanor\": str (ein Adjektiv)}.\n"
+            + json.dumps({"identitaet": identity, "welt": context}, ensure_ascii=False)
+        )
+        out = self._json(prompt)
+        if not out or not out.get("personality"):
+            return self._fallback.describe_survivor(identity, context)
+        return out
+
+    def summarize_day(self, persona, entries) -> str:
+        lines = "\n".join(f"[{e.get('role')}] {e.get('text')}" for e in entries if e.get("text"))
+        prompt = ("Fasse dieses Gespräch in höchstens 3 knappen deutschen Sätzen zusammen "
+                  "(nur Gesagtes, keine neuen Fakten). Nur den Text.\n" + lines)
+        try:
+            return self._run(prompt).strip() or self._fallback.summarize_day(persona, entries)
+        except Exception:
+            return self._fallback.summarize_day(persona, entries)
 
     # --- match_items ---------------------------------------------------
     def match_items(self, query, location, candidates, profile=None, history=None) -> dict[str, Any]:

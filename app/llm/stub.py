@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from .base import LLMBackend, proposal
+import hashlib
 
 _LOCATION_SYNONYMS: dict[str, str] = {
     "supermarkt": "supermarket", "markt": "supermarket", "laden": "supermarket",
@@ -96,7 +97,108 @@ def _words(text: str) -> list[str]:
     return "".join(ch if ch.isalnum() else " " for ch in text.lower()).split()
 
 
-class RuleBackend(LLMBackend):
+# --- Companion (Slice M4): deterministische Keyword-Regeln ---------------------
+_GREETINGS = (
+    "Hallo. Schön, dass du da bist.",
+    "Ich hatte schon kaum noch gehofft, jemanden zu treffen.",
+    "Hm. Ja, ich höre dir zu.",
+    "Es ist so still geworden. Was gibt es?",
+)
+_DEMEANOR_OPEN = {
+    "zurückhaltend": "Ich bin vorsichtig. ",
+    "freundlich": "",
+    "nervös": "Entschuldige, ich bin etwas aufgewühlt. ",
+}
+
+
+def _has(t: str, words: tuple[str, ...]) -> bool:
+    return any(w in t for w in words)
+
+
+def _pick(seq: tuple[str, ...], text: str) -> str:
+    h = int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:8], 16)
+    return seq[h % len(seq)]
+
+
+def _companion_reply(persona, memory, context, player_text) -> dict[str, Any]:
+    t = (player_text or "").lower()
+    trust = float(context.get("trust") or 0.0)
+    opinion = context.get("opinion")
+    join_trust = float(context.get("join_trust") or 0.45)
+    inv = {i["item_id"]: i for i in (context.get("inventory") or [])}
+    prefix = _DEMEANOR_OPEN.get((persona or {}).get("demeanor"), "")
+
+    if _has(t, ("komm mit", "begleit", "schließ dich", "schliess dich", "gemeinsam", "zusammen")):
+        if trust >= join_trust and opinion != "stay":
+            return {"speech": prefix + "Ja. Ich komme mit dir.", "intents": [{"intent": "agree_join"}]}
+        if opinion == "stay":
+            return {"speech": prefix + "Nein. Ich bleibe lieber hier.", "intents": [{"intent": "refuse"}]}
+        return {"speech": prefix + "Ich muss dir erst besser vertrauen.", "intents": [{"intent": "refuse"}]}
+    if _has(t, ("geh weg", "verschwinde", "trennen wir", "lass mich allein")):
+        return {"speech": "Wenn du es so willst, gehe ich.", "intents": [{"intent": "leave"}]}
+    if _has(t, ("folge mir", "folg mir", "geh mit mir", "lauf mit")):
+        return {"speech": "In Ordnung, ich folge dir.", "intents": [{"intent": "follow"}]}
+    if _has(t, ("bleib", "warte", "wart hier")):
+        return {"speech": "Gut, ich warte hier.", "intents": [{"intent": "wait_here"}]}
+    asked = None
+    for item_id, kws in _ITEM_KEYWORDS.items():
+        if _has(t, kws) and _has(t, ("hast du", "gib", "kannst du mir", "brauche", "habe durst", "habe hunger")):
+            asked = item_id
+            break
+    if asked is not None:
+        if asked in inv:
+            return {"speech": "Hier, nimm.",
+                    "intents": [{"intent": "give_item", "item_id": asked, "qty": 1}]}
+        return {"speech": "Ich habe selbst keins. Hast du welches für mich?",
+                "intents": [{"intent": "ask_item", "item_id": asked}]}
+    if _has(t, ("teilen", "teil dein essen", "hunger")) and _has(t, ("essen", "teil", "hunger")):
+        if any(i.get("category") == "food" for i in inv.values()):
+            return {"speech": "Wir teilen, was ich habe.", "intents": [{"intent": "share_food"}]}
+        return {"speech": "Ich habe nichts zu essen.", "intents": []}
+    if _has(t, ("beruf", "was machst du", "was hast du gemacht", "arbeit")):
+        return {"speech": "Davon kann ich dir erzählen.",
+                "intents": [{"intent": "share_info", "topic": "profession"}]}
+    if _has(t, ("gesehen", "gibt es hier", "wo finde", "orte", "in der nähe", "in der naehe")):
+        return {"speech": "Ich zeige dir, was ich hier kenne.",
+                "intents": [{"intent": "share_info", "topic": "places"}]}
+    return {"speech": prefix + _pick(_GREETINGS, t), "intents": []}
+
+
+def _describe_survivor(identity, context) -> dict[str, Any]:
+    name = identity.get("name") or "Die Person"
+    prof = identity.get("profession") or "ohne festen Beruf"
+    age = identity.get("age")
+    demeanor = ("zurückhaltend", "freundlich", "nervös")[
+        int(hashlib.sha256(f"{name}|{prof}".encode("utf-8")).hexdigest()[:4], 16) % 3]
+    return {
+        "personality": f"{demeanor.capitalize()}, praktisch veranlagt.",
+        "short_bio": f"{name}, {age if age is not None else 'unbekannten Alters'}, "
+                     f"früher {prof}. Hat den Zusammenbruch allein überstanden.",
+        "demeanor": demeanor,
+    }
+
+
+def _summarize_day(persona, entries) -> str:
+    lines = [e.get("text", "") for e in entries if e.get("text")]
+    if not lines:
+        return ""
+    return f"Gespräche des Tages: {len(lines)} Einträge. Zuletzt: {lines[-1]}"
+
+
+class _CompanionRules:
+    """Regelbasierte Companion-Methoden des Stubs (Mixin für RuleBackend)."""
+
+    def companion_reply(self, persona, memory, context, player_text) -> dict[str, Any]:
+        return _companion_reply(persona, memory, context, player_text)
+
+    def describe_survivor(self, identity, context, history=None) -> dict[str, Any]:
+        return _describe_survivor(identity, context)
+
+    def summarize_day(self, persona, entries) -> str:
+        return _summarize_day(persona, entries)
+
+
+class RuleBackend(_CompanionRules, LLMBackend):
     name = "stub"
 
     def interpret(self, text: str, context: dict[str, Any]) -> dict[str, Any]:

@@ -11,7 +11,7 @@ import pytest
 os.environ["WASTELAND_LLM_BACKEND"] = "stub"
 import app.llm as llm_mod
 import app.osm.roads as roads_module
-from app.sim import actions, audit, constants, decay_world, devices, ledger, online
+from app.sim import actions, audit, companion, constants, decay_world, devices, ledger, online
 from app.sim import kb
 from tests.conftest import insert_location
 from tests.test_actions import add_group_item, build_world
@@ -229,7 +229,9 @@ def test_search_survivors_deterministic_contact(conn_seeded):
                            for i in r["interrupts"])
         outcomes.append(seq)
         assert online.search_tries(c) >= 1
-        assert len(online.pending_contacts(c)) == online.contact_count(c)
+        # Die erste Antwort wird vom Companion (#48) verbraucht (handled = 1).
+        consumed = 1 if companion.get(c) else 0
+        assert len(online.pending_contacts(c)) == online.contact_count(c) - consumed
     assert outcomes[0] == outcomes[1]
     assert any(x is True for x in outcomes[0])         # steigende Chance -> irgendwann Antwort
 

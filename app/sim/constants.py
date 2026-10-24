@@ -232,3 +232,32 @@ SURVIVOR_MOBILITY_RAMP_DAYS: int = 5
 # Kalibrierung: SPEED_SCALE * 1.0 = 12.5 km (mittel), * 2.0 = 25 km (voll).
 # => SPEED_SCALE = 12.5 km / 1.0 = 12.5
 SURVIVOR_SPEED_SCALE: float = 12.5
+
+
+# --- Companion (Slice M4, Issue #48) ---------------------------------------
+COMPANION_REACH_M = 30.0            # Treffen/Gespräch: Abstand zum Treffpunkt bzw. zum Spieler
+COMPANION_CONTACT_RADIUS_M = 3000.0  # Suchradius für den Survivor-Charakter
+COMPANION_CONTACT_DELAY_MIN = (20, 90)   # Wartezeit zwischen Kontakt und Aufbruch
+COMPANION_MEET_RADIUS_M = 2500.0    # Treffpunkt liegt höchstens so weit vom Spieler weg
+COMPANION_FOLLOW_DIST_M = 60.0      # ab hier läuft ein folgender Companion nach
+COMPANION_NOTE_RADIUS_M = 800.0     # Survivor in dieser Nähe findet eine Notiz
+COMPANION_NOTE_DELAY_MIN = 120      # frühestens so lange nach dem Hinterlassen
+COMPANION_TRUST_START = 0.15
+COMPANION_TRUST_MET = 0.05          # Treffen zustande gekommen
+COMPANION_TRUST_TALK = 0.01         # je Gespräch (Tagescap COMPANION_TRUST_TALK_CAP)
+COMPANION_TRUST_TALK_CAP = 0.03
+COMPANION_TRUST_GIVE_HUNGRY = 0.10  # Spieler gibt Essen/Wasser, Companion bedürftig
+COMPANION_TRUST_GIVE = 0.03         # sonstige Gabe
+COMPANION_TRUST_SHARED = 0.02       # Companion teilt eigenen Besitz
+COMPANION_TRUST_JOINED_PER_DAY = 0.02
+COMPANION_TRUST_HUNGER_PER_DAY = 0.30   # Verlust pro Tag bei Hunger < COMPANION_HUNGRY
+COMPANION_TRUST_IGNORED_REQUEST = 0.05  # unerfüllte Bitte, Companion in Not
+COMPANION_HUNGRY = 0.35
+COMPANION_JOIN_TRUST = 0.45         # ab hier kann er sich anschließen
+COMPANION_FOLLOW_TRUST = 0.30       # ab hier folgt er (vor dem Anschluss)
+COMPANION_LEAVE_TRUST = 0.15        # darunter + Not -> er geht
+COMPANION_REQUEST_TIMEOUT_MIN = 1440
+COMPANION_TALK_MINUTES = 10
+COMPANION_SPEECH_MAX = 600
+COMPANION_SUMMARY_MAX = 400
+COMPANION_PROFILE_TEXT_MAX = 300

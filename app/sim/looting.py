@@ -207,3 +207,45 @@ def loot_limited(
     res["carried_kg"] = round(movement.carried_weight(conn, group_id), 2)
     res["capacity_kg"] = round(capacity, 2)
     return res
+
+
+# --- Gruppe -> Gruppe (Companion, Slice M4) ------------------------------
+def transfer_between_groups(
+    conn: sqlite3.Connection, from_gid: int, to_gid: int, item_id: str,
+    qty: float | None = None,
+) -> float:
+    """Verschiebt bis zu ``qty`` (None = alles) von ``item_id`` aus dem Inventar
+    der Gruppe ``from_gid`` in das von ``to_gid`` (bilanzneutral: Quelle und
+    Senke summieren gleich, der Ledger bleibt unberührt). Frischeste Qualität
+    zuerst; der Decay-Anker (``acquired_tick``) wandert mit. Schreibt ohne
+    eigenes Commit (Aufrufer hält die Transaktion). Liefert die bewegte Menge."""
+    rows = conn.execute(
+        "SELECT id, quantity, quality, acquired_tick FROM group_inventory "
+        "WHERE group_id = ? AND item_id = ? AND quantity > 0 "
+        "ORDER BY quality DESC, id;",
+        (from_gid, item_id),
+    ).fetchall()
+    budget = float("inf") if qty is None else max(0.0, float(qty))
+    moved = 0.0
+    for row in rows:
+        take = min(row["quantity"], budget)
+        if take <= 1e-12:
+            continue
+        budget -= take
+        remaining = row["quantity"] - take
+        if remaining <= 1e-9:
+            conn.execute("DELETE FROM group_inventory WHERE id = ?;", (row["id"],))
+        else:
+            conn.execute("UPDATE group_inventory SET quantity = ? WHERE id = ?;",
+                         (remaining, row["id"]))
+        conn.execute(
+            "INSERT INTO group_inventory (group_id, item_id, quantity, quality, "
+            "acquired_tick) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(group_id, item_id, quality) DO UPDATE SET "
+            "quantity = quantity + excluded.quantity;",
+            (to_gid, item_id, take, row["quality"], row["acquired_tick"]),
+        )
+        moved += take
+        if budget <= 1e-12:
+            break
+    return moved

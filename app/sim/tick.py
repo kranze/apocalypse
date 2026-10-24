@@ -6,7 +6,7 @@ commit-or-rollback). ``fast_forward`` ruft Ticks in Folge auf und stoppt bei
 einem Interrupt (DESIGN.md §4: aggressives Interrupten) oder wenn niemand mehr
 lebt.
 
-Kein LLM, keine Agenten (Phase 4 ist erst Schritt 2+). Headless und über fixen
+Kein LLM (Phase 4 = deterministischer Companion-Tick). Headless und über fixen
 world_seed reproduzierbar.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from collections.abc import Collection
 from typing import Any
 
 from .. import config
-from . import audit, biology, capabilities, constants, decay_world, movement, provision, resources, survivor_sim
+from . import audit, biology, capabilities, companion, constants, decay_world, movement, provision, resources, survivor_sim
 from .events import HALTING
 
 
@@ -83,7 +83,9 @@ def advance_tick(
         biology.recompute_performance(conn)
         interrupts += biology.death_check(conn, t1, minutes, seed)
 
-        # Phase 4 — Agenten-Ticks: erst Schritt 2+ (bewusst leer)
+        # Phase 4 — Agenten-Ticks: der Companion (deterministisch, kein LLM; erst nach
+        # Welt, Ressourcen und Biologie)
+        interrupts += companion.advance(conn, minutes, t1, seed)
 
         # Phase 5 — Interrupts gesammelt; Bilanz-Prüfung als Sicherheitsnetz
         interrupts += audit.run_audit(conn, t1)

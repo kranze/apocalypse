@@ -79,7 +79,7 @@ function chat(role, text) {
 
 // log() bleibt als Alias für System-Zeilen (Ereignisse, Versorgung, Fehler).
 function log(msg, severity) {
-  chat("system", msg);
+  chat(severity === "decision" ? "decision" : "system", msg);
 }
 
 // Lädt den persistierten Chat-Verlauf und rendert ihn einmalig beim Start.
@@ -544,7 +544,10 @@ function animateAlongPath(path) {
 
 // --- Tick / Aktionen ---------------------------------------------------
 function reportInterrupts(list) {
-  for (const i of list || []) log(i.message, i.severity);
+  for (const i of list || []) {
+    log(i.message, i.severity);
+    if (/^Jemand hat geantwortet/.test(i.message || "")) pendingFlash = true;
+  }
 }
 async function refreshDiscoveredMarkers() {
   // Nach Aktionen können sich Bestände/Status geändert haben – nur Viewport neu laden.
@@ -581,6 +584,7 @@ async function loadActionBar() {
       }
       const b = document.createElement("button");
       b.textContent = a.label;
+      if (a.kind === "talk") b.classList.add("talk-btn");
       if (a.minutes != null) {
         const c = document.createElement("span");
         c.className = "cost";
@@ -589,6 +593,7 @@ async function loadActionBar() {
       }
       b.disabled = actionBusy;
       b.onclick = () => {
+        if (a.kind === "talk") { enterTalkMode(); return; } // Text kommt aus dem Eingabefeld
         const { label, minutes, options, ...payload } = a; // kind + Parameter zurücksenden
         doAction(payload); // ohne item_id wählt der Sim-Kern das beste Item
       };
@@ -679,6 +684,7 @@ async function doAction(payload) {
     setActionBusy(false);
   }
   await loadActionBar();
+  await refreshCompanion();
   return r;
 }
 
@@ -686,9 +692,15 @@ async function handleActionResult(r) {
   if (r.narration) chat("claude", r.narration);
   if (r.hint) log(r.hint);
   if (!r.ok) {
-    if (!r.hint && !r.narration) log(`Nicht möglich (${r.reason || "unbekannt"}).`);
+    if (!r.hint && !r.narration) {
+      const msg = r.reason === "companion_not_here"
+        ? "Der Begleiter ist nicht in Reichweite." : `Nicht möglich (${r.reason || "unbekannt"}).`;
+      log(msg);
+    }
+    if (r.reason === "companion_not_here") exitTalkMode();
     return;
   }
+  reportCompanionResult(r.result || r);
   if (r.minutes_spent > 0) log(`(+${r.minutes_spent} min)`);
   reportInterrupts(r.interrupts);
 
@@ -707,6 +719,183 @@ async function handleActionResult(r) {
   if (r.stopped === "dead") checkEndState({ player: { is_alive: false }, day: r.day });
   if (r.arrived_location_id != null) await arriveAt(r.arrived_location_id);
   else if (selectedId !== null) await selectLocation(selectedId);
+}
+
+// --- Companion (M4) -----------------------------------------------------
+// Vertrag: GET /companion (null | Objekt), GET /companion/chat, POST /actions {kind:"talk", text}.
+let companion = null;
+let companionMarker = null, meetingMarker = null, meetingLine = null;
+let talkMode = false;
+let pendingFlash = false;
+let companionPanelOpen = false;
+
+const STAGE_DE = {
+  contacted: "Kontakt", approaching: "unterwegs zum Treffpunkt", met: "getroffen",
+  joined: "dabei", left: "gegangen", dead: "tot",
+};
+const OPINION_DE = { stay: "will bleiben", go: "will gehen", undecided: "unentschlossen" };
+
+function companionName() { return (companion && companion.name) || "Begleiter"; }
+
+function companionIcon(c) {
+  return L.divIcon({
+    className: "companion-icon", html: c.stage === "dead" ? "✝" : "🧑",
+    iconSize: [36, 36], iconAnchor: [18, 18],
+  });
+}
+
+function clearCompanionLayers() {
+  if (map) for (const l of [companionMarker, meetingMarker, meetingLine]) if (l) map.removeLayer(l);
+  companionMarker = meetingMarker = meetingLine = null;
+}
+
+function renderCompanionMap(c) {
+  if (!map) return;
+  if (!c || c.stage === "left") { clearCompanionLayers(); return; }
+  if (c.lat != null && c.lon != null) {
+    if (!companionMarker) {
+      companionMarker = L.marker([c.lat, c.lon], { title: c.name, zIndexOffset: 900, icon: companionIcon(c) }).addTo(map);
+    } else {
+      companionMarker.setLatLng([c.lat, c.lon]);
+      companionMarker.setIcon(companionIcon(c));
+    }
+    companionMarker.bindTooltip(c.name || "Begleiter", { direction: "top", offset: [0, -14] });
+  }
+  const mp = c.meeting_point;
+  const showMp = mp && ["contacted", "approaching", "met"].includes(c.stage);
+  if (showMp) {
+    const label = "Treffpunkt: " + (mp.name || "?");
+    if (!meetingMarker) {
+      meetingMarker = L.marker([mp.lat, mp.lon], {
+        title: label, zIndexOffset: 500,
+        icon: L.divIcon({ className: "meeting-icon", html: "📍", iconSize: [32, 32], iconAnchor: [16, 30] }),
+      }).addTo(map);
+    } else {
+      meetingMarker.setLatLng([mp.lat, mp.lon]);
+    }
+    meetingMarker.bindTooltip(label, { permanent: true, direction: "right", offset: [10, -14], className: "meeting-label" });
+  } else if (meetingMarker) {
+    map.removeLayer(meetingMarker); meetingMarker = null;
+  }
+  if (showMp && c.stage === "approaching" && playerMarker) {
+    const ll = playerMarker.getLatLng();
+    const pts = [[ll.lat, ll.lng], [mp.lat, mp.lon]];
+    if (meetingLine) meetingLine.setLatLngs(pts);
+    else meetingLine = L.polyline(pts, { color: "#e0a030", weight: 3, opacity: 0.8, dashArray: "6 8" }).addTo(map);
+  } else if (meetingLine) {
+    map.removeLayer(meetingLine); meetingLine = null;
+  }
+}
+
+function flashMeetingPoint() {
+  if (!map || !meetingMarker) return;
+  map.panTo(meetingMarker.getLatLng());
+  const el = meetingMarker.getElement();
+  if (el) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+}
+
+function renderCompanionPanel(c) {
+  const wrap = document.getElementById("companion-block");
+  if (!c) { wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  document.getElementById("companion-stage").textContent = STAGE_DE[c.stage] || c.stage;
+  document.getElementById("companion-name").textContent =
+    `${c.name || "?"}` + (c.age != null ? `, ${c.age} J.` : "") + (c.profession ? ` · ${c.profession}` : "");
+  const bio = [c.short_bio, c.personality].filter(Boolean).join(" · ");
+  const bioEl = document.getElementById("companion-bio");
+  bioEl.textContent = bio;
+  bioEl.classList.toggle("hidden", !bio);
+  const n = c.needs || {};
+  setBar("cp-hunger-fill", "cp-hunger-val", n.hunger ?? 0);
+  setBar("cp-thirst-fill", "cp-thirst-val", n.thirst ?? 0);
+  setBar("cp-sleep-fill", "cp-sleep-val", n.sleep ?? 0);
+  setBar("cp-trust-fill", "cp-trust-val", c.trust ?? 0);
+  document.getElementById("companion-opinion").textContent =
+    "Haltung: " + (OPINION_DE[c.opinion] || c.opinion || "unentschlossen");
+}
+
+async function renderCompanionChat() {
+  const box = document.getElementById("companion-chat");
+  try {
+    const rows = await getJSON("/companion/chat?limit=20");
+    box.innerHTML = "";
+    for (const row of (rows || []).slice(-20)) {
+      const d = document.createElement("div");
+      d.className = "cmsg " + row.role;
+      d.textContent = row.role === "companion" ? `${companionName()}: ${row.text}` : row.text;
+      box.appendChild(d);
+    }
+    box.scrollTop = box.scrollHeight;
+  } catch (e) { /* Verlauf nicht kritisch */ }
+}
+
+function toggleCompanionPanel() {
+  const body = document.getElementById("companion-body");
+  companionPanelOpen = body.classList.toggle("hidden") === false;
+  document.getElementById("btn-companion").textContent = (companionPanelOpen ? "▾" : "▸") + " Begleiter";
+  if (companionPanelOpen) renderCompanionChat();
+}
+
+function applyCompanion(c) {
+  companion = c || null;
+  renderCompanionPanel(companion);
+  renderCompanionMap(companion);
+  if (!companion && talkMode) exitTalkMode();
+  if (pendingFlash && companion) { pendingFlash = false; flashMeetingPoint(); }
+}
+
+// Eine Anfrage pro Aktion (+ Verlauf nur, wenn das Panel offen ist).
+async function refreshCompanion() {
+  try {
+    applyCompanion(await getJSON("/companion"));
+    if (companion && companionPanelOpen) await renderCompanionChat();
+  } catch (e) { /* Backend ohne Companion – still ignorieren */ }
+}
+
+const INTENT_DE = {
+  follow: "folgt dir", wait_here: "wartet hier", share_food: "teilt Essen mit dir",
+  agree_join: "schließt sich dir an", refuse: "lehnt ab", leave: "geht",
+  share_info: "teilt Wissen", give_item: "gibt dir etwas", ask_item: "bittet um etwas",
+};
+
+function intentLine(it, applied) {
+  const name = companionName();
+  const kind = it.intent;
+  const item = it.item_name || it.item_id || null;
+  const qty = it.qty != null ? `${it.qty}× ` : "";
+  if (applied) {
+    if (kind === "give_item" && item) return `${name} gibt dir ${qty}${item}.`;
+    if (kind === "ask_item" && item) return `${name} bittet um ${item}.`;
+    if (kind === "share_info" && it.topic) return `${name} teilt Wissen: ${it.topic}.`;
+    return `${name} ${INTENT_DE[kind] || kind}.`;
+  }
+  return `abgelehnt: ${it.reason || "nicht möglich"}` + (kind ? ` (${INTENT_DE[kind] || kind})` : "");
+}
+
+function reportCompanionResult(res) {
+  if (!res || typeof res !== "object") return;
+  if (res.speech) chat("companion", `${companionName()}: ${res.speech}`);
+  for (const it of res.intents_applied || []) log(intentLine(it, true));
+  for (const it of res.intents_rejected || []) log(intentLine(it, false));
+  if (res.companion) applyCompanion(res.companion);
+}
+
+function enterTalkMode() {
+  talkMode = true;
+  const input = document.getElementById("cmd");
+  input.placeholder = `Was sagst du zu ${companionName()}?`;
+  document.getElementById("talk-indicator").classList.remove("hidden");
+  document.getElementById("talk-name").textContent = `Gespräch mit ${companionName()}`;
+  input.classList.add("talking");
+  input.focus();
+}
+
+function exitTalkMode() {
+  talkMode = false;
+  const input = document.getElementById("cmd");
+  input.placeholder = overrideCommand ? "Begründung: womit erzeugst du Hitze?" : "Was tust du?";
+  document.getElementById("talk-indicator").classList.add("hidden");
+  input.classList.remove("talking");
 }
 
 // --- Endzustände (Platzhalter für M5) ----------------------------------
@@ -743,6 +932,11 @@ async function doCommand() {
   if (!text) return;
   input.value = "";
   chat("player", text);
+  if (talkMode) {
+    await doAction({ kind: "talk", text });
+    if (!gameOver) input.focus();
+    return;
+  }
   const payload = overrideCommand
     ? { kind: "freetext", text: overrideCommand, override_text: overrideCommand, override_reason: text }
     : { kind: "freetext", text };
@@ -787,7 +981,10 @@ function wireHud() {
   document.getElementById("btn-cmd").onclick = doCommand;
   document.getElementById("cmd").addEventListener("keydown", (e) => {
     if (e.key === "Enter") doCommand();
+    if (e.key === "Escape" && talkMode) exitTalkMode();
   });
+  document.getElementById("talk-cancel").onclick = exitTalkMode;
+  document.getElementById("btn-companion").onclick = toggleCompanionPanel;
   document.getElementById("panel-close").onclick = () => {
     document.getElementById("panel").classList.add("hidden");
     selectedId = null;
@@ -808,6 +1005,7 @@ async function startGame(state) {
   await loadLocations();
   await refreshState();
   await loadActionBar();
+  await refreshCompanion();
 }
 
 function showIntro(text) {
@@ -850,6 +1048,7 @@ async function submitOnboarding() {
     document.getElementById("endscreen").classList.add("hidden");
     await refreshState();
     await loadActionBar();
+    await refreshCompanion();
     // Heimat-Chunks sofort im Hintergrund laden (kein Warten auf moveend).
     ensureChunksInView().then(() => refreshLocationsInView()).catch(() => {});
   } catch (e) {

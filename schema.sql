@@ -354,6 +354,44 @@ CREATE TABLE chat_log (
 );
 CREATE INDEX idx_chat_log_char ON chat_log(character_id);
 
+
+-- ---------------------------------------------------------------------------
+-- COMPANION (Slice M4, Issue #48/#16): genau ein Begleiter je Spiel.
+-- Nur der Sim-Kern schreibt; das LLM liefert Rede + Intentionen.
+-- ---------------------------------------------------------------------------
+CREATE TABLE companion_state (
+    id                  INTEGER PRIMARY KEY CHECK (id = 1),
+    character_id        INTEGER NOT NULL,
+    group_id            INTEGER,                -- eigene Gruppe bis zum Anschluss
+    stage               TEXT NOT NULL,          -- contacted|approaching|met|joined|left|dead
+    mode                TEXT NOT NULL DEFAULT 'wait',   -- wait|follow
+    trust               REAL NOT NULL DEFAULT 0.15,
+    opinion             TEXT NOT NULL DEFAULT 'undecided', -- stay|go|undecided
+    meeting_location_id INTEGER,
+    contact_source      TEXT,
+    contact_tick        INTEGER,
+    met_tick            INTEGER,
+    joined_tick         INTEGER,
+    left_tick           INTEGER,
+    last_tick           INTEGER,                -- letzter Agenten-Tick (Zeitdelta)
+    last_summary_day    INTEGER NOT NULL DEFAULT -1,
+    talk_day            INTEGER NOT NULL DEFAULT -1,
+    talk_trust_today    REAL NOT NULL DEFAULT 0.0,
+    request_item        TEXT,                   -- offene Bitte (ask_item)
+    request_tick        INTEGER
+);
+CREATE TABLE survivor_profile (
+    character_id    INTEGER PRIMARY KEY,
+    personality     TEXT,
+    short_bio       TEXT,
+    demeanor        TEXT,
+    created_tick    INTEGER
+);
+CREATE TABLE companion_memory (
+    day     INTEGER PRIMARY KEY,                -- zusammengefasster Spieltag
+    text    TEXT NOT NULL
+);
+
 INSERT INTO knowledge_base (topic, key, value, provenance, created_tick) VALUES
   ('provides:heat',        'firewood',    '{"consume": 1}', 'curated', 0),
   ('provides:power',       'generator',   '{"consume": 0}', 'curated', 0),

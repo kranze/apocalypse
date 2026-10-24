@@ -19,7 +19,7 @@ import json
 from typing import Any
 
 from . import lore
-from .base import EFFECT_OPS, FEASIBILITY, LLMBackend, proposal
+from .base import COMPANION_INTENTS, EFFECT_OPS, FEASIBILITY, LLMBackend, proposal
 from .stub import RuleBackend
 
 INTERPRET_MODEL = "claude-sonnet-5-5"
@@ -256,6 +256,68 @@ class ClaudeBackend(LLMBackend):
             return self._fallback.narrate_location(location, profile)
 
 
+    # --- Companion (Slice M4) -------------------------------------------
+    def companion_reply(self, persona, memory, context, player_text) -> dict[str, Any]:
+        """Rede + Intentionen per Tool-Use (strict Schema). Bei API-Fehlern Stub."""
+        user = json.dumps({
+            "persona": persona, "memory": memory, "context": context,
+            "spieler_sagt": player_text,
+        }, ensure_ascii=False)
+        msgs = _history_to_messages(context.get("history"), user)
+        try:
+            resp = self._client.messages.create(
+                model=INTERPRET_MODEL, max_tokens=1000,
+                system=[{"type": "text", "text": lore.companion_system(),
+                         "cache_control": {"type": "ephemeral"}}],
+                tools=[_COMPANION_TOOL],
+                tool_choice={"type": "auto"},  # erzwungenes tool_choice: 400 auf Sonnet 5.5
+                messages=msgs,
+            )
+            out = next((b.input for b in resp.content if b.type == "tool_use"), None)
+            if out is None:  # nur Text: als Rede nehmen, ohne Intentionen
+                text = " ".join(b.text for b in resp.content if b.type == "text").strip()
+                out = {"speech": text, "intents": []} if text else None
+        except Exception:
+            return self._fallback.companion_reply(persona, memory, context, player_text)
+        if not out:
+            return self._fallback.companion_reply(persona, memory, context, player_text)
+        return {"speech": str(out.get("speech") or ""), "intents": list(out.get("intents") or [])}
+
+    def describe_survivor(self, identity, context, history=None) -> dict[str, Any]:
+        sys = ("Du erfindest Persönlichkeit und Kurzbiografie (je 1-2 Sätze, deutsch) für "
+               "einen Überlebenden einer Endzeit-Welt, passend zu Name, Alter, Beruf und "
+               "Region. `demeanor` ist ein einzelnes Adjektiv. Keine Spielmechanik, "
+               "keine Vorräte. Antworte nur über das Werkzeug.")
+        user = json.dumps({"identitaet": identity, "welt": context}, ensure_ascii=False)
+        try:
+            resp = self._client.messages.create(
+                model=INTERPRET_MODEL, max_tokens=500,
+                system=[{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}],
+                tools=[_DESCRIBE_TOOL], tool_choice={"type": "auto"},
+                messages=[{"role": "user", "content": user}],
+            )
+            out = next((b.input for b in resp.content if b.type == "tool_use"), None)
+        except Exception:
+            return self._fallback.describe_survivor(identity, context)
+        return dict(out) if out else self._fallback.describe_survivor(identity, context)
+
+    def summarize_day(self, persona, entries) -> str:
+        sys = ("Fasse das Gespräch eines Tages aus Sicht des Companions in höchstens "
+               "3 knappen deutschen Sätzen zusammen: Wer hat was gesagt oder zugesagt? "
+               "Nur Gesagtes, keine neuen Fakten.")
+        lines = "\n".join(f"[{e.get('role')}] {e.get('text')}" for e in entries if e.get("text"))
+        try:
+            resp = self._client.messages.create(
+                model=INTERPRET_MODEL, max_tokens=300,
+                system=[{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": json.dumps(
+                    {"persona": persona, "gespraech": lines}, ensure_ascii=False)}],
+            )
+            parts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
+            return " ".join(parts).strip() or self._fallback.summarize_day(persona, entries)
+        except Exception:
+            return self._fallback.summarize_day(persona, entries)
+
     def match_items(self, query, location, candidates, profile=None, history=None) -> dict[str, Any]:
         sys = (
             "Der Spieler durchsucht einen Ort einer Endzeit-Welt und sucht nach "
@@ -289,6 +351,51 @@ class ClaudeBackend(LLMBackend):
             return self._fallback.match_items(query, location, candidates, profile)
         return {"item_ids": [i for i in (out.get("item_ids") or []) if isinstance(i, str)],
                 "narration": out.get("narration", "")}
+
+
+_COMPANION_TOOL = {
+    "name": "companion_response",
+    "description": "Rede des Companions plus seine Intentionen (geschlossenes Vokabular).",
+    "strict": True,
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "speech": {"type": "string"},
+            "intents": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "intent": {"type": "string", "enum": list(COMPANION_INTENTS)},
+                        "item_id": {"type": ["string", "null"]},
+                        "qty": {"type": ["number", "null"]},
+                        "topic": {"type": ["string", "null"]},
+                    },
+                    "required": ["intent", "item_id", "qty", "topic"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["speech", "intents"],
+        "additionalProperties": False,
+    },
+}
+
+_DESCRIBE_TOOL = {
+    "name": "describe_survivor",
+    "description": "Persönlichkeit und Kurzbiografie passend zur Basis-Identität.",
+    "strict": True,
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "personality": {"type": "string"},
+            "short_bio": {"type": "string"},
+            "demeanor": {"type": "string"},
+        },
+        "required": ["personality", "short_bio", "demeanor"],
+        "additionalProperties": False,
+    },
+}
 
 
 _MATCH_TOOL = {
@@ -328,6 +435,28 @@ def _history_messages(context: dict[str, Any]) -> list[dict]:
             out.append(msg)
     while out and out[0]["role"] != "user":  # API: erste Nachricht muss user sein
         out.pop(0)
+    return out
+
+
+def _history_to_messages(history: list[dict] | None, user: str) -> list[dict]:
+    """Companion-Verlauf als alternierende messages: player -> user, companion ->
+    assistant (narrator wird ignoriert); die aktuelle Eingabe steht zuletzt als user."""
+    out: list[dict] = []
+    for h in history or []:
+        t = h.get("text") or ""
+        role = {"player": "user", "companion": "assistant"}.get(h.get("role", ""))
+        if not t or role is None:
+            continue
+        if out and out[-1]["role"] == role:
+            out[-1] = {"role": role, "content": out[-1]["content"] + "\n" + t}
+        else:
+            out.append({"role": role, "content": t})
+    while out and out[0]["role"] != "user":
+        out.pop(0)
+    if out and out[-1]["role"] == "user":
+        out[-1] = {"role": "user", "content": out[-1]["content"] + "\n\n" + user}
+    else:
+        out.append({"role": "user", "content": user})
     return out
 
 

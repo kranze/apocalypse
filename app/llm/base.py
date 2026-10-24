@@ -28,6 +28,12 @@ EFFECT_OPS = (
     "fill_water", "barricade", "leave_note", "charge_device", "drink",
 )
 
+# Geschlossenes Intentions-Vokabular des Companions (muss zu sim/companion.INTENTS passen).
+COMPANION_INTENTS = (
+    "follow", "wait_here", "give_item", "ask_item", "share_food", "agree_join",
+    "refuse", "leave", "share_info",
+)
+
 FEASIBILITY = ("feasible", "risky", "too_complex", "impossible")
 
 
@@ -54,6 +60,36 @@ class LLMBackend:
         """Kurze, atmosphärische Beschreibung eines erreichten Ortes (Flavor,
         keine Mechanik). ``history`` ist der jüngste Gesprächsverlauf
         (aus ``chatlog.recent``); Default: None (rückwärtskompatibel)."""
+        return ""
+
+    def describe_survivor(
+        self,
+        identity: dict[str, Any],
+        context: dict[str, Any],
+        history: list[dict] | None = None,
+    ) -> dict[str, Any]:
+        """Persönlichkeit/Kurzbiografie zur prozeduralen Basis-Identität (#16).
+        ``identity`` = {name, age, sex, profession, region}. Liefert
+        {personality, short_bio, demeanor} (kurze Texte) oder {} (der Sim-Kern
+        nimmt dann seinen deterministischen Default). Reiner Vorschlag."""
+        return {}
+
+    def companion_reply(
+        self,
+        persona: dict[str, Any],
+        memory: list[str],
+        context: dict[str, Any],
+        player_text: str,
+    ) -> dict[str, Any]:
+        """Antwort des Companions auf den Spielertext. Liefert
+        {speech: str, intents: [{intent, item_id?, qty?, topic?}]} — Intentionen
+        aus ``COMPANION_INTENTS``. Das LLM behauptet keine Zustände; der Sim-Kern
+        validiert jede Intention. Default: stumm."""
+        return {"speech": "", "intents": []}
+
+    def summarize_day(self, persona: dict[str, Any], entries: list[dict]) -> str:
+        """Kompakte Tageszusammenfassung des Gesprächs (Text, kein Zustand).
+        Default: leer (der Sim-Kern speichert dann nichts)."""
         return ""
 
     def match_items(

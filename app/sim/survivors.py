@@ -382,3 +382,79 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlam = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
     return R * 2 * math.asin(math.sqrt(a))
+
+
+# ---------------------------------------------------------------------------
+# Profil-Anreicherung bei Begegnung (Issue #16)
+# ---------------------------------------------------------------------------
+
+_PROFILE_MAX = 300
+_DEMEANORS = ("zurückhaltend", "freundlich", "nervös", "gelassen", "misstrauisch")
+
+
+def _clamp_text(value, limit: int = _PROFILE_MAX) -> str:
+    return " ".join(str(value or "").split())[:limit].strip()
+
+
+def _survivor_age(conn: sqlite3.Connection, birthdate: str | None) -> int | None:
+    from datetime import datetime
+    if not birthdate:
+        return None
+    start = conn.execute("SELECT start_datetime FROM world WHERE id = 1;").fetchone()
+    try:
+        b, now = datetime.fromisoformat(birthdate), datetime.fromisoformat(start["start_datetime"])
+    except (ValueError, TypeError):
+        return None
+    return max(0, now.year - b.year - ((now.month, now.day) < (b.month, b.day)))
+
+
+def get_profile(conn: sqlite3.Connection, character_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT character_id, personality, short_bio, demeanor, created_tick "
+        "FROM survivor_profile WHERE character_id = ?;", (character_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def enrich_on_encounter(conn: sqlite3.Connection, character_id: int) -> dict | None:
+    """Begegnung: erzeugt einmalig Persönlichkeit/Kurzbiografie eines
+    Survivor-Charakters. Idempotent — existiert schon ein Profil, gibt es KEINEN
+    erneuten LLM-Aufruf. Das Backend schlägt nur vor; hier wird geklemmt (Länge)
+    und geschrieben, bei leerem/fehlerhaftem Vorschlag greift ein deterministischer
+    Default. Schreibt ohne eigenes Commit (Aufrufer hält die Transaktion).
+    None, wenn es den Charakter nicht gibt."""
+    existing = get_profile(conn, character_id)
+    if existing is not None:
+        return existing
+    char = conn.execute(
+        "SELECT id, name, sex, birthdate, profession, lat, lon FROM characters "
+        "WHERE id = ? AND type = 'survivor';", (character_id,)).fetchone()
+    if char is None:
+        return None
+    from ..llm import get_backend
+    from . import rng
+    from .locale import region_for
+
+    world = conn.execute("SELECT tick, world_seed FROM world WHERE id = 1;").fetchone()
+    identity = {
+        "name": char["name"], "sex": char["sex"], "age": _survivor_age(conn, char["birthdate"]),
+        "profession": char["profession"],
+        "region": region_for(char["lat"], char["lon"]) if char["lat"] is not None else "unknown",
+    }
+    try:
+        proposal = get_backend().describe_survivor(identity, {"tick": world["tick"]}) or {}
+    except Exception:
+        proposal = {}
+    if not isinstance(proposal, dict):
+        proposal = {}
+    prof = identity["profession"] or "ohne festen Beruf"
+    demeanor = _clamp_text(proposal.get("demeanor"), 40) or _DEMEANORS[
+        int(rng.roll(world["world_seed"], "demeanor", character_id) * len(_DEMEANORS))
+        % len(_DEMEANORS)]
+    personality = _clamp_text(proposal.get("personality")) or f"{demeanor.capitalize()}."
+    short_bio = _clamp_text(proposal.get("short_bio")) or (
+        f"{identity['name']}, früher {prof}. Hat den Zusammenbruch überlebt.")
+    conn.execute(
+        "INSERT INTO survivor_profile (character_id, personality, short_bio, demeanor, "
+        "created_tick) VALUES (?, ?, ?, ?, ?);",
+        (character_id, personality, short_bio, demeanor, world["tick"]))
+    return get_profile(conn, character_id)

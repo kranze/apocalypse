@@ -16,6 +16,7 @@ from pathlib import Path
 _LLM_DIR = Path(__file__).resolve().parent
 BIBLE_PATH = _LLM_DIR.parent / "data" / "world_bible.md"
 PROMPT_PATH = _LLM_DIR / "prompts" / "adjudicator.md"
+COMPANION_PROMPT_PATH = _LLM_DIR / "prompts" / "companion.md"
 
 _DEFAULT_BIBLE = (
     "Ein Virus hat fast alle Menschen getötet; weltweit leben nur noch rund "
@@ -46,6 +47,18 @@ def adjudicator_system() -> str:
     return _read(PROMPT_PATH, _DEFAULT_SYSTEM)
 
 
+_DEFAULT_COMPANION = (
+    "Du spielst einen Überlebenden und sprichst knapp, deutsch, in der Ich-Form. "
+    "Erfinde keine Fakten und behaupte keine Zustände; nenne nur Intentionen."
+)
+
+
+@lru_cache(maxsize=1)
+def companion_system() -> str:
+    """System-Text des Companions: Prompt + Welt-Bibel (konstant -> cachebar)."""
+    return _read(COMPANION_PROMPT_PATH, _DEFAULT_COMPANION) + "\n\n# Welt-Bibel\n\n" + world_bible()
+
+
 def system_prompt() -> str:
     """Konstanter System-Text: Prompt + Welt-Bibel (cachebar, enthält nichts
     Veränderliches wie Tag/Uhrzeit — das steht im Nutzer-Kontext)."""
@@ -55,3 +68,4 @@ def system_prompt() -> str:
 def reload() -> None:
     world_bible.cache_clear()
     adjudicator_system.cache_clear()
+    companion_system.cache_clear()
