@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from . import lore
@@ -243,6 +244,18 @@ class CliBackend(LLMBackend):
             return txt or self._fallback.narrate_location(location, profile)
         except Exception:
             return self._fallback.narrate_location(location, profile)
+
+    # --- Epilog (Slice M5) ----------------------------------------------
+    def narrate_epilogue(self, evaluation, profile=None, companion=None, highlights=None) -> str:
+        sys = (Path(__file__).parent / "prompts" / "epilogue.md").read_text(encoding="utf-8")
+        prompt = (sys + "\nAntworte nur mit dem Epilog-Text.\n\n" + json.dumps(
+            {"evaluation": evaluation, "profile": profile, "companion": companion,
+             "highlights": highlights}, ensure_ascii=False))
+        try:
+            txt = self._run(prompt).strip()
+            return txt or self._fallback.narrate_epilogue(evaluation, profile, companion, highlights)
+        except Exception:
+            return self._fallback.narrate_epilogue(evaluation, profile, companion, highlights)
 
 
 def _history_compact(history: list[dict] | None) -> str:

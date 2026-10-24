@@ -245,3 +245,26 @@ button:disabled { opacity: .4; cursor: default; }
 .talk-indicator button { padding: 0 6px; }
 #cmd.talking { border-color: #5f8f4e; box-shadow: 0 0 0 1px #5f8f4e; }
 .actionbar .talk-btn { border-color: #5f8f4e; }
+
+/* M5: Entscheidung & Ending */
+#endscreen { backdrop-filter: blur(6px); background: rgba(10, 12, 16, 0.82); }
+.decide-sheet { width: 620px; }
+.decide-summary { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; color: var(--muted); margin-bottom: 12px; display: grid; gap: 4px; }
+.decide-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sheet .choice-btn { margin-top: 0; padding: 22px 10px; font-size: 20px; background: var(--panel2); color: var(--text); border: 2px solid var(--border); }
+.sheet .choice-btn.selected, .sheet .opt-btn.selected { border-color: var(--accent); background: rgba(120, 160, 90, 0.18); }
+.decide-sheet h3 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.decide-list { display: grid; gap: 6px; }
+.sheet .opt-btn { margin-top: 0; padding: 8px 10px; font-size: 13px; text-align: left; background: var(--panel2); color: var(--text); border: 1px solid var(--border); font-weight: 400; }
+.sheet .opt-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.sheet button:disabled { opacity: 0.5; cursor: not-allowed; }
+.sheet button.secondary { background: transparent; color: var(--muted); border: 1px solid var(--border); font-weight: 400; margin-top: 8px; }
+.decide-btn { border-color: var(--warn) !important; }
+.ending-sheet { width: 680px; }
+.epilogue { font-family: Georgia, "Times New Roman", serif; font-size: 16px; line-height: 1.7; margin: 8px 0 18px; }
+.epilogue p { margin: 0 0 12px; }
+.end-components { display: grid; gap: 6px; margin-bottom: 14px; }
+.comp-row { display: grid; grid-template-columns: 130px 1fr 1.3fr; gap: 10px; align-items: center; font-size: 12px; }
+.comp-label { color: var(--text); }
+.comp-text { color: var(--muted); }
+.end-stats { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 10px; }

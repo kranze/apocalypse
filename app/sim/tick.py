@@ -16,7 +16,7 @@ from collections.abc import Collection
 from typing import Any
 
 from .. import config
-from . import audit, biology, capabilities, companion, constants, decay_world, movement, provision, resources, survivor_sim
+from . import audit, biology, capabilities, companion, constants, decay_world, ending, movement, provision, resources, survivor_sim
 from .events import HALTING
 
 
@@ -43,6 +43,9 @@ def advance_tick(
         conn.execute("UPDATE world SET tick = ? WHERE id = 1;", (t1,))
         distances = movement.advance_movement(conn, minutes, t1)
         interrupts += distances.pop("_interrupts", [])
+        # Statistik: gelaufene Meter des Spielers (Sim-Kern zählt, Issue #49)
+        if distances.get(ending.PLAYER_ID):
+            ending.bump_stats(conn, meters=distances[ending.PLAYER_ID])
 
         # Survivor-Globalschritt: einmal pro überschrittenem Spieltag (Phase 1, nach Zeit).
         # „Zuletzt verarbeiteter Tag" in world.survivor_sim_day persistiert.
@@ -87,7 +90,9 @@ def advance_tick(
         # Welt, Ressourcen und Biologie)
         interrupts += companion.advance(conn, minutes, t1, seed)
 
-        # Phase 5 — Interrupts gesammelt; Bilanz-Prüfung als Sicherheitsnetz
+        # Phase 5 — Interrupts gesammelt (u.a. Entscheidungs-Aufruf Tag 7, 07:00);
+        #           Bilanz-Prüfung als Sicherheitsnetz
+        interrupts += ending.check_deadline(conn, t1)
         interrupts += audit.run_audit(conn, t1)
 
     return {"tick": t1, "interrupts": interrupts}

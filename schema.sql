@@ -24,7 +24,10 @@ CREATE TABLE world (
     weather_state   TEXT    NOT NULL DEFAULT 'clear', -- clear|clouds|rain|storm|snow
     weather_wind_kmh REAL   NOT NULL DEFAULT 0.0,
     -- Survivor-Migrations-Sim: zuletzt vollständig verarbeiteter Spieltag (Issue #19)
-    survivor_sim_day INTEGER NOT NULL DEFAULT 0
+    survivor_sim_day INTEGER NOT NULL DEFAULT 0,
+    -- Ende (Slice M5): 1 = Spiel beendet; decision_notified = Entscheidungs-Interrupt gesendet
+    ended           INTEGER NOT NULL DEFAULT 0,
+    decision_notified INTEGER NOT NULL DEFAULT 0
 );
 
 -- ---------------------------------------------------------------------------
@@ -392,6 +395,30 @@ CREATE TABLE companion_memory (
     text    TEXT NOT NULL
 );
 
+-- ---------------------------------------------------------------------------
+-- ENDE & STATISTIK (Slice M5, Issue #49). Nur der Sim-Kern schreibt.
+-- ---------------------------------------------------------------------------
+CREATE TABLE game_ending (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    outcome         TEXT NOT NULL,              -- stay_secure|stay_fragile|go_hopeful|go_desperate|death
+    choice          TEXT,                       -- stay|go (NULL bei Tod)
+    transport       TEXT,
+    destination     TEXT,
+    score           REAL NOT NULL DEFAULT 0.0,
+    components_json TEXT NOT NULL DEFAULT '[]',
+    epilogue        TEXT NOT NULL DEFAULT '',
+    cause_of_death  TEXT,
+    ended_tick      INTEGER NOT NULL
+);
+CREATE TABLE game_stats (
+    id                 INTEGER PRIMARY KEY CHECK (id = 1),
+    actions            INTEGER NOT NULL DEFAULT 0,
+    freetext           INTEGER NOT NULL DEFAULT 0,
+    freetext_rejected  INTEGER NOT NULL DEFAULT 0,
+    meters_walked      REAL NOT NULL DEFAULT 0.0
+);
+INSERT INTO game_stats (id) VALUES (1);
+
 INSERT INTO knowledge_base (topic, key, value, provenance, created_tick) VALUES
   ('provides:heat',        'firewood',    '{"consume": 1}', 'curated', 0),
   ('provides:power',       'generator',   '{"consume": 0}', 'curated', 0),
@@ -423,6 +450,7 @@ INSERT INTO item_catalog (id, name, category, weight_kg, kcal_per_unit, decay_ha
   ('bandage',       'Verbandpäckchen',    'medical',  0.05,  NULL,  NULL,    1, 0, 0.0, NULL),
   ('painkillers',   'Schmerztabletten',   'medical',  0.02,  NULL,  NULL,    1, 0, 0.0, NULL),
   ('first_aid_kit', 'Erste-Hilfe-Set',    'medical',  0.60,  NULL,  NULL,    0, 0, 0.0, NULL),
+  ('bicycle',       'Fahrrad',            'tool',    14.00,  NULL,  NULL,    0, 0, 0.0, NULL),
   ('hammer',        'Hammer',             'tool',     0.80,  NULL,  NULL,    0, 0, 0.0, NULL),
   ('rope',          'Seil 10m',           'material', 1.00,  NULL,  NULL,    1, 0, 0.0, NULL),
   ('duct_tape',     'Gewebeband',         'material', 0.30,  NULL,  NULL,    1, 0, 0.0, NULL),

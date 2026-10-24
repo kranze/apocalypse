@@ -61,6 +61,7 @@ let selectedId = null;
 
 // Aktions-basierte Zeit: Zeit vergeht nur durch Aktionen (POST /actions).
 let actionBusy = false;   // eine Aktion läuft -> Aktions-UI gesperrt
+let lastHabitability = null, lastInventory = [];
 let gameOver = false;     // Endzustand (tot / Woche vorbei) angezeigt
 const WALK_ANIM_MS = 1200; // Dauer der Lauf-Animation des Spieler-Markers
 
@@ -125,6 +126,12 @@ function renderInfra(infra) {
   setBar("water-fill", "water-val", infra.water);
   setBar("cell-fill", "cell-val", infra.cellular);
   setBar("net-fill", "net-val", infra.quality);
+  if (infra.habitability) {
+    const hb = infra.habitability;
+    setBar("hab-fill", "hab-val", hb.value ?? 0);
+    document.getElementById("hab-val").textContent = (hb.label || "") + " " + Math.round((hb.value ?? 0) * 100) + "%";
+    lastHabitability = hb;
+  }
   const devs = infra.devices || [];
   const phone = devs.find((d) => d.item_id === "smartphone") || devs.find((d) => d.item_id === "laptop");
   const pb = devs.find((d) => d.item_id === "powerbank");
@@ -166,6 +173,7 @@ async function refreshState() {
 
 async function refreshInventory() {
   const inv = await getJSON(`/groups/${PLAYER_ID}/inventory`);
+  lastInventory = inv;
   try {
     const c = await getJSON(`/groups/${PLAYER_GROUP}/carry`);
     const el = document.getElementById("carry");
@@ -582,6 +590,17 @@ async function loadActionBar() {
         if (!chooser.classList.contains("hidden")) { renderChooser(a); keepChooser = true; }
         continue;
       }
+      if (a.kind === "decide") {
+        const forced = (av.actions || []).every((x) => x.kind === "decide");
+        const db = document.createElement("button");
+        db.textContent = a.label;
+        db.classList.add("decide-btn");
+        db.disabled = actionBusy;
+        db.onclick = () => openDecision(a, forced);
+        bar.appendChild(db);
+        if (forced && !decisionOpen && !gameOver) openDecision(a, true);
+        continue;
+      }
       const b = document.createElement("button");
       b.textContent = a.label;
       if (a.kind === "talk") b.classList.add("talk-btn");
@@ -678,6 +697,7 @@ async function doAction(payload) {
   try {
     r = await postJSON("/actions", { character_id: PLAYER_ID, ...payload });
     await handleActionResult(r);
+    if (payload.kind === "decide" && r.ok) { closeDecision(); await showEnding(); }
   } catch (e) {
     log("Fehler: " + e.message, "decision");
   } finally {
@@ -692,6 +712,7 @@ async function handleActionResult(r) {
   if (r.narration) chat("claude", r.narration);
   if (r.hint) log(r.hint);
   if (!r.ok) {
+    if (r.reason === "game_over") { await showEnding(); return; }
     if (!r.hint && !r.narration) {
       const msg = r.reason === "companion_not_here"
         ? "Der Begleiter ist nicht in Reichweite." : `Nicht möglich (${r.reason || "unbekannt"}).`;
@@ -716,7 +737,7 @@ async function handleActionResult(r) {
 
   await refreshState(); // HUD, Inventar, Endzustand
   await refreshDiscoveredMarkers();
-  if (r.stopped === "dead") checkEndState({ player: { is_alive: false }, day: r.day });
+  if (r.stopped === "dead") await showEnding();
   if (r.arrived_location_id != null) await arriveAt(r.arrived_location_id);
   else if (selectedId !== null) await selectLocation(selectedId);
 }
@@ -898,23 +919,170 @@ function exitTalkMode() {
   input.classList.remove("talking");
 }
 
-// --- Endzustände (Platzhalter für M5) ----------------------------------
-function showEnd(title, text) {
-  gameOver = true;
-  document.getElementById("end-title").textContent = title;
-  document.getElementById("end-text").textContent = text;
-  document.getElementById("endscreen").classList.remove("hidden");
+// --- Entscheidung & Ending (M5) ----------------------------------------
+// Vertrag: decide-Aktion (options: choices/transports/destinations), GET /ending (null | Objekt).
+let decisionOpen = false;
+let decState = { choice: null, transport: null, destination: null, opts: null };
+
+function inventorySummary() {
+  const sum = (re) => lastInventory.filter((i) => re.test(`${i.item_id} ${i.name || ""}`))
+    .reduce((n, i) => n + (+i.quantity || 0), 0);
+  const water = sum(/wasser|water/i);
+  const food = sum(/dose|konserv|brot|nudel|reis|riegel|keks|müsli|essen|food|bread|rice|pasta|can/i);
+  return { water, food };
+}
+
+function renderDecisionSummary() {
+  const { water, food } = inventorySummary();
+  const rows = [`Rucksack: Wasser ${Math.round(water)} · Essen ${Math.round(food)}`];
+  if (lastHabitability) {
+    rows.push(`Bewohnbarkeit hier: ${lastHabitability.label || "?"} (${Math.round((lastHabitability.value ?? 0) * 100)} %)`);
+  }
+  if (companion && companion.stage) {
+    rows.push(`Begleiter: ${companionName()} · ${STAGE_DE[companion.stage] || companion.stage}`
+      + ` · Vertrauen ${Math.round((companion.trust ?? 0) * 100)} %`
+      + ` · Haltung: ${OPINION_DE[companion.opinion] || companion.opinion || "unentschlossen"}`);
+  }
+  const el = document.getElementById("decide-summary");
+  el.innerHTML = "";
+  for (const t of rows) { const d = document.createElement("div"); d.textContent = t; el.appendChild(d); }
+}
+
+function renderDecisionLists() {
+  const o = decState.opts || {};
+  const mk = (containerId, items, key, isOk) => {
+    const c = document.getElementById(containerId);
+    c.innerHTML = "";
+    for (const it of items || []) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "opt-btn" + (decState[key] === it.id ? " selected" : "");
+      const ok = isOk(it);
+      b.disabled = !ok;
+      b.textContent = it.label + (ok ? "" : ` — fehlt: ${it.missing || "?"}`);
+      b.onclick = () => { decState[key] = it.id; renderDecisionLists(); updateDecisionConfirm(); };
+      c.appendChild(b);
+    }
+  };
+  mk("decide-transports", o.transports, "transport", (t) => t.ok !== false);
+  mk("decide-dests", o.destinations, "destination", () => true);
+}
+
+function updateDecisionConfirm() {
+  const { choice, transport, destination } = decState;
+  const ok = choice === "stay" || (choice === "go" && transport && destination);
+  document.getElementById("decide-confirm").disabled = !ok || actionBusy;
+  document.getElementById("dec-stay").classList.toggle("selected", choice === "stay");
+  document.getElementById("dec-go").classList.toggle("selected", choice === "go");
+  document.getElementById("decide-go").classList.toggle("hidden", choice !== "go");
+}
+
+function openDecision(a, forced) {
+  decisionOpen = true;
+  decState = { choice: null, transport: null, destination: null, opts: a.options || {} };
+  document.getElementById("decide-forced").classList.toggle("hidden", !forced);
+  document.getElementById("decide-cancel").classList.toggle("hidden", !!forced);
+  const choices = decState.opts.choices || ["stay", "go"];
+  document.getElementById("dec-stay").classList.toggle("hidden", !choices.includes("stay"));
+  document.getElementById("dec-go").classList.toggle("hidden", !choices.includes("go"));
+  renderDecisionSummary();
+  renderDecisionLists();
+  updateDecisionConfirm();
+  document.getElementById("decide-overlay").classList.remove("hidden");
+}
+
+function closeDecision() {
+  decisionOpen = false;
+  document.getElementById("decide-overlay").classList.add("hidden");
+}
+
+function wireDecision() {
+  document.getElementById("dec-stay").onclick = () => { decState.choice = "stay"; updateDecisionConfirm(); };
+  document.getElementById("dec-go").onclick = () => { decState.choice = "go"; updateDecisionConfirm(); };
+  document.getElementById("decide-cancel").onclick = closeDecision;
+  document.getElementById("decide-confirm").onclick = () => {
+    const { choice, transport, destination } = decState;
+    const payload = { kind: "decide", choice };
+    if (choice === "go") { payload.transport = transport; payload.destination = destination; }
+    doAction(payload);
+  };
+}
+
+function fillEnding(e, fallbackTitle, fallbackText) {
+  const title = document.getElementById("end-title");
+  const sub = document.getElementById("end-sub");
+  const epi = document.getElementById("end-epilogue");
+  const comp = document.getElementById("end-components");
+  const stats = document.getElementById("end-stats");
+  epi.innerHTML = ""; comp.innerHTML = ""; stats.innerHTML = "";
+  if (!e) {
+    title.textContent = fallbackTitle; sub.textContent = fallbackText;
+    return;
+  }
+  const dead = e.outcome === "death";
+  const dayNo = (e.day ?? 0) + 1;
+  title.textContent = dead ? "Du hast nicht überlebt" : (e.outcome_label || "Ende");
+  const parts = [];
+  if (dead && e.cause_of_death) parts.push(e.cause_of_death[0].toUpperCase() + e.cause_of_death.slice(1));
+  parts.push(`Tag ${dayNo}`);
+  if (!dead && e.score != null) parts.push(`Bewertung ${Math.round(e.score * 100)} %`);
+  sub.textContent = parts.join(" · ");
+  for (const para of String(e.epilogue || "").split(/\n+/).filter((x) => x.trim())) {
+    const p = document.createElement("p");
+    p.textContent = para.trim();
+    epi.appendChild(p);
+  }
+  for (const c of e.components || []) {
+    const row = document.createElement("div");
+    row.className = "comp-row";
+    const l = document.createElement("span"); l.className = "comp-label"; l.textContent = c.label;
+    const bar = document.createElement("div"); bar.className = "bar";
+    const f = document.createElement("span");
+    const v = Math.max(0, Math.min(1, +c.value || 0));
+    f.style.width = v * 100 + "%";
+    f.style.background = v < 0.2 ? "var(--crit)" : v < 0.5 ? "var(--warn)" : "var(--accent)";
+    bar.appendChild(f);
+    const t = document.createElement("span"); t.className = "comp-text"; t.textContent = c.text || "";
+    row.append(l, bar, t);
+    comp.appendChild(row);
+  }
+  const st = e.stats || {};
+  const items = [`Tage: ${dayNo}`];
+  if (st.actions != null) items.push(`Aktionen: ${st.actions}`);
+  if (st.km_walked != null) items.push(`Strecke: ${(+st.km_walked).toFixed(1)} km`);
+  if (st.freetext != null) items.push(`Freitext-Ablehnungen: ${st.freetext_rejected ?? 0}/${st.freetext}`);
+  items.push(`Pakete: ${(st.packages || []).length}`);
+  items.push(`Begleiter: ${{ joined: "dabei", none: "keiner" }[st.companion] || st.companion || "keiner"}`);
+  for (const t of items) { const d = document.createElement("span"); d.textContent = t; stats.appendChild(d); }
+}
+
+let _endingLoading = false;
+async function showEnding() {
+  if (_endingLoading) return;
+  _endingLoading = true;
+  try {
+    let e = null;
+    try { e = await getJSON("/ending"); } catch (err) { e = null; }
+    let fallbackText = "";
+    if (!e) {
+      // Graceful: /ending liefert nichts -> nur anzeigen, wenn wir wirklich tot sind.
+      const s = await getJSON("/world/state").catch(() => null);
+      if (!(s && s.player && s.player.is_alive === false)) return;
+      fallbackText = `Du hast Tag ${(s.day ?? 0) + 1} erreicht.`;
+    }
+    gameOver = true;
+    closeDecision();
+    fillEnding(e, "Du hast nicht überlebt", fallbackText);
+    document.getElementById("endscreen").classList.remove("hidden");
+    await loadActionBar();
+  } finally {
+    _endingLoading = false;
+  }
 }
 
 function checkEndState(s) {
   if (gameOver || !s) return;
-  const dayNo = (s.day ?? 0) + 1;
-  if (s.player && s.player.is_alive === false) {
-    showEnd("Du hast nicht überlebt", `Du hast Tag ${dayNo} erreicht.`);
-  } else if (s.days_total != null && s.day >= s.days_total) {
-    showEnd("Die erste Woche ist vorbei",
-      "Die Entscheidung, wie es weitergeht, folgt in einer späteren Version.");
-  }
+  if ((s.player && s.player.is_alive === false) || s.ended) showEnding();
 }
 
 function newGameScreen() {
@@ -1003,6 +1171,7 @@ async function startGame(state) {
   // HUD war eben noch hidden: Karte braucht ihre Größe, sonst ist die Bbox leer/klein.
   map.invalidateSize();
   if (!_hudWired) wireHud();
+  wireDecision();
   await loadChatHistory();
   await loadLocations();
   await refreshState();
@@ -1049,6 +1218,7 @@ async function submitOnboarding() {
     if (!_mapReady) buildMap(center); else map.setView(center, startZoom);
     if (_mapReady && map) map.setView(center, startZoom);
     if (!_hudWired) wireHud();
+    wireDecision();
     // Intro in den Chat schreiben (direkt, kein loadChatHistory nötig — frisch).
     _chatHistoryLoaded = true; // verhindert doppeltes Laden
     chat("claude", r.intro);

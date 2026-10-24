@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from . import config, db
 from .osm import loader
 from .sim import (
-    actions as actions_mod, adjudicator, companion as companion_mod, online, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
+    actions as actions_mod, adjudicator, companion as companion_mod, ending as ending_mod, online, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
 from .sim import chunks as chunks_mod
 from .sim import survivor_sim, survivors as survivors_mod
@@ -75,6 +75,9 @@ class ActionRequest(BaseModel):
     override_reason: str | None = None
     package_id: str | None = None   # download
     source: str | None = None       # charge: "grid" | "powerbank"
+    choice: str | None = None       # decide: "stay" | "go"
+    transport: str | None = None    # decide (go): "foot" | "bike" | "car"
+    destination: str | None = None  # decide (go): "north"|"east"|"south"|"west"|"contact:<id>"
 
 
 class MoveRequest(BaseModel):
@@ -361,8 +364,10 @@ def location_inventory(location_id: int) -> list[dict]:
 
 def _with_names(conn, rows: list[dict]) -> list[dict]:
     """Ergänzt jede Inventarzeile um den Anzeigenamen (item_catalog.name)."""
-    names = dict(conn.execute("SELECT id, name FROM item_catalog;").fetchall())
-    return [{**r, "name": names.get(r["item_id"], r["item_id"])} for r in rows]
+    cat = {r["id"]: (r["name"], r["category"])
+           for r in conn.execute("SELECT id, name, category FROM item_catalog;").fetchall()}
+    return [{**r, "name": cat.get(r["item_id"], (r["item_id"], None))[0],
+             "category": cat.get(r["item_id"], (None, None))[1]} for r in rows]
 
 
 @app.get("/groups/{group_id}/inventory")
@@ -498,10 +503,12 @@ def world_state() -> dict:
             f"SELECT {_CHARACTER_COLS} FROM characters WHERE id = 1;"
         ).fetchone()
         infra = None
+        ended = ending_mod.is_ended(conn)
         if player is not None and player["group_id"] is not None:
             here = (actions_mod._location_here(conn, 1, constants.LOOT_REACH_M)
                     if player["lat"] is not None else None)
             infra = online.hud_infra(conn, player["group_id"], here["id"] if here else None)
+            infra["habitability"] = ending_mod.habitability(conn)
     finally:
         conn.close()
     dt = datetime.fromisoformat(w["start_datetime"]) + timedelta(minutes=w["tick"])
@@ -516,7 +523,25 @@ def world_state() -> dict:
         "weather": {"temp_c": w["weather_temp_c"], "state": w["weather_state"]},
         "player": dict(player) if player else None,
         "infra": infra,
+        "ended": ended,
     }
+
+
+@app.get("/ending")
+def get_ending() -> dict | None:
+    """Das Ende (Outcome, Bewertung, Epilog, Statistik) oder ``null``, solange das Spiel
+    läuft. Ist der Spieler gestorben, ohne dass eine Aktion das Ende ausgelöst hat
+    (z.B. Debug-Tick), wird das Todes-Ende hier einmalig nachgeholt."""
+    conn = db.get_connection()
+    try:
+        res = ending_mod.get_ending(conn)
+        if res is None:
+            p = conn.execute("SELECT is_alive FROM characters WHERE id = 1;").fetchone()
+            if p is not None and not p["is_alive"]:
+                res = ending_mod.finish_death(conn)
+        return res
+    finally:
+        conn.close()
 
 
 @app.post("/actions")

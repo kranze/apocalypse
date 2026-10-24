@@ -25,6 +25,7 @@ from . import (
     constants,
     devices,
     effects,
+    ending,
     generation,
     heat,
     looting,
@@ -915,8 +916,42 @@ def _do_freetext(conn, cid, action) -> dict[str, Any]:
     )
 
 
+# --- Entscheidung / Ende (Slice M5, Issue #49) ----------------------------
+def _do_decide(conn, cid, action) -> dict[str, Any]:
+    """Die Entscheidung am Ende der Woche: bleiben oder gehen. Der Sim-Kern bewertet
+    (``ending.evaluate``), das LLM erzählt nur den Epilog. Kostet keine Spielzeit."""
+    if not ending.decision_open(conn):
+        return _reject(conn, "decide", cid, "decision_not_yet",
+                       "Noch ist es zu früh für diese Entscheidung.")
+    choice = action.get("choice")
+    if choice not in ending.CHOICES:
+        return _reject(conn, "decide", cid, "bad_choice", "Bleiben oder gehen?")
+    transport = destination = None
+    if choice == "go":
+        transport, destination = action.get("transport"), action.get("destination")
+        if not transport:
+            return _reject(conn, "decide", cid, "transport_required", "Womit willst du aufbrechen?")
+        found = next((t for t in ending.transports(conn) if t["id"] == transport), None)
+        if found is None:
+            return _reject(conn, "decide", cid, "bad_transport", "Dieses Transportmittel gibt es nicht.")
+        if not found["ok"]:
+            return _reject(conn, "decide", cid, "transport_unavailable",
+                           f"Dir fehlt: {found.get('missing', 'etwas')}.")
+        if not destination:
+            return _reject(conn, "decide", cid, "destination_required", "Wohin willst du?")
+        if not any(d["id"] == destination for d in ending.destinations(conn)):
+            return _reject(conn, "decide", cid, "bad_destination", "Dieses Ziel gibt es nicht.")
+    movement.clear_destination(conn, cid)
+    res = ending.finish(conn, choice, transport, destination)
+    return _response(
+        conn, "decide", cid, stopped="ended", narration=res["epilogue"],
+        result={"ending": res},
+    )
+
+
 # --- öffentliche Schnittstelle ------------------------------------------
 _HANDLERS = {
+    "decide": _do_decide,
     "walk": _do_walk,
     "loot": _do_loot,
     "search": _do_search,
@@ -940,14 +975,31 @@ def perform(conn: sqlite3.Connection, character_id: int, action: dict) -> dict[s
     ).fetchone()
     if row is None:
         return _reject(conn, str(kind), character_id, "no_character", "Kein Charakter.")
+    if ending.is_ended(conn):
+        return _reject(conn, str(kind), character_id, "game_over", "Das Spiel ist zu Ende.")
     if not row["is_alive"]:
         return _reject(conn, str(kind), character_id, "dead", "Du bist tot.")
+    if kind != "decide" and ending.deadline_reached(conn):
+        return _reject(conn, str(kind), character_id, "decision_required",
+                       "Die Woche ist um. Du musst dich entscheiden.")
     if kind in ("eat", "prepare"):
-        return _do_consume(conn, character_id, action, kind)
-    handler = _HANDLERS.get(kind)
-    if handler is None:
-        return _reject(conn, str(kind), character_id, "unknown_kind", "Unbekannte Aktion.")
-    return handler(conn, character_id, action)
+        resp = _do_consume(conn, character_id, action, kind)
+    else:
+        handler = _HANDLERS.get(kind)
+        if handler is None:
+            return _reject(conn, str(kind), character_id, "unknown_kind", "Unbekannte Aktion.")
+        resp = handler(conn, character_id, action)
+    if kind != "decide":
+        with conn:  # Statistik zählt der Sim-Kern (Fun-Gate-Kennzahlen, Issue #49)
+            ending.bump_stats(
+                conn, actions=1 if resp["ok"] else 0,
+                freetext=1 if kind == "freetext" else 0,
+                freetext_rejected=1 if kind == "freetext" and not resp["ok"] else 0)
+        if not _alive(conn, character_id):
+            # Tod während der Aktion = Ende. Der Epilog (LLM) entsteht außerhalb
+            # der Tick-Transaktion.
+            ending.finish_death(conn)
+    return resp
 
 
 def _online_actions(conn, cid, gid, here) -> list[dict[str, Any]]:
@@ -1001,11 +1053,15 @@ def available(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]:
         "SELECT group_id, hunger, sleep, is_alive FROM characters WHERE id = ?;",
         (character_id,),
     ).fetchone()
-    if char is None or not char["is_alive"]:
+    if char is None or not char["is_alive"] or ending.is_ended(conn):
         return {"here_location_id": None, "actions": []}
 
     actions: list[dict[str, Any]] = []
     here = _location_here(conn, character_id, constants.LOOT_REACH_M)
+    decide = {"kind": "decide", "label": "Entscheidung treffen", "minutes": None,
+              "options": ending.decision_options(conn)}
+    if ending.deadline_reached(conn):
+        return {"here_location_id": here["id"] if here else None, "actions": [decide]}
     if here is not None:
         fp = conn.execute(
             "SELECT footprint_m2 FROM locations WHERE id = ?;", (here["id"],)
@@ -1069,6 +1125,9 @@ def available(conn: sqlite3.Connection, character_id: int) -> dict[str, Any]:
 
     actions.extend(_online_actions(conn, character_id, gid, here))
     actions.extend(_companion_actions(conn, character_id, gid))
+
+    if ending.decision_open(conn):
+        actions.append(decide)
 
     actions.append({"kind": "wait", "label": "1 Std. warten", "minutes": 60})
     until_morning = minutes_until_morning(conn)

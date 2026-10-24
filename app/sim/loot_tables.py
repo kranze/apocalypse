@@ -69,6 +69,7 @@ LOOT_TABLES: dict[str, list[dict]] = {
         {"item_id": "firewood", "chance": 0.80, "qty_min": 3, "qty_max": 20},
         {"item_id": "gasoline", "chance": 0.40, "qty_min": 1, "qty_max": 3},
         {"item_id": "generator", "chance": 0.15, "qty_min": 1, "qty_max": 1},
+        {"item_id": "bicycle", "chance": 0.35, "qty_min": 1, "qty_max": 2},
         {"item_id": "water_1l", "chance": 0.30, "qty_min": 1, "qty_max": 6},
     ],
     # Wohnhäuser: kleine Vorräte, ein paar Werkzeuge.
@@ -89,6 +90,7 @@ LOOT_TABLES: dict[str, list[dict]] = {
         {"item_id": "firewood", "chance": 0.25, "qty_min": 1, "qty_max": 6},
         {"item_id": "laptop", "chance": 0.15, "qty_min": 1, "qty_max": 1},
         {"item_id": "powerbank", "chance": 0.12, "qty_min": 1, "qty_max": 1},
+        {"item_id": "bicycle", "chance": 0.05, "qty_min": 1, "qty_max": 1},
     ],
     # generisches Nicht-Wohngebäude: spärlich
     "building": [

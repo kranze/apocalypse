@@ -16,6 +16,7 @@ Sim-Kern validiert/führt aus und berechnet Folgen selbst.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from . import lore
@@ -255,6 +256,24 @@ class ClaudeBackend(LLMBackend):
         except Exception:
             return self._fallback.narrate_location(location, profile)
 
+
+    # --- Epilog (Slice M5) ------------------------------------------------
+    def narrate_epilogue(self, evaluation, profile=None, companion=None, highlights=None) -> str:
+        sys = (Path(__file__).parent / "prompts" / "epilogue.md").read_text(encoding="utf-8")
+        user = json.dumps({"evaluation": evaluation, "profile": profile,
+                           "companion": companion, "highlights": highlights},
+                          ensure_ascii=False)
+        try:
+            resp = self._client.messages.create(
+                model=INTERPRET_MODEL, max_tokens=900,
+                system=[{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": user}],
+            )
+            parts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
+            return " ".join(parts).strip() or self._fallback.narrate_epilogue(
+                evaluation, profile, companion, highlights)
+        except Exception:
+            return self._fallback.narrate_epilogue(evaluation, profile, companion, highlights)
 
     # --- Companion (Slice M4) -------------------------------------------
     def companion_reply(self, persona, memory, context, player_text) -> dict[str, Any]:

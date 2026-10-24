@@ -113,6 +113,17 @@ _MIGRATIONS = (
     " demeanor TEXT, created_tick INTEGER);",
     "CREATE TABLE IF NOT EXISTS companion_memory ("
     " day INTEGER PRIMARY KEY, text TEXT NOT NULL);",
+    # Ende & Statistik (Slice M5, Issue #49)
+    "CREATE TABLE IF NOT EXISTS game_ending ("
+    " id INTEGER PRIMARY KEY CHECK (id = 1), outcome TEXT NOT NULL, choice TEXT,"
+    " transport TEXT, destination TEXT, score REAL NOT NULL DEFAULT 0.0,"
+    " components_json TEXT NOT NULL DEFAULT '[]', epilogue TEXT NOT NULL DEFAULT '',"
+    " cause_of_death TEXT, ended_tick INTEGER NOT NULL);",
+    "CREATE TABLE IF NOT EXISTS game_stats ("
+    " id INTEGER PRIMARY KEY CHECK (id = 1), actions INTEGER NOT NULL DEFAULT 0,"
+    " freetext INTEGER NOT NULL DEFAULT 0, freetext_rejected INTEGER NOT NULL DEFAULT 0,"
+    " meters_walked REAL NOT NULL DEFAULT 0.0);",
+    "INSERT OR IGNORE INTO game_stats (id) VALUES (1);",
 )
 
 # (tabelle, spalte, DDL-Definition) — nur angelegt, wenn die Spalte fehlt.
@@ -148,6 +159,9 @@ _ADD_COLUMNS = (
     # Heimat-Anker für Bewegungsmodell v2 (Issue #29)
     ("survivors", "home_lat", "REAL"),
     ("survivors", "home_lon", "REAL"),
+    # Ende (Slice M5, Issue #49)
+    ("world", "ended", "INTEGER NOT NULL DEFAULT 0"),
+    ("world", "decision_notified", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -188,6 +202,8 @@ def _seed_static(conn: sqlite3.Connection) -> None:
         "('smartphone',  'Smartphone',     'device',  0.20, NULL, NULL, 0, 0, 0.0, NULL)",
         "('laptop',      'Laptop',         'device',  1.80, NULL, NULL, 0, 0, 0.0, NULL)",
         "('powerbank',   'Powerbank',      'device',  0.40, NULL, NULL, 0, 0, 0.0, NULL)",
+        # Fahrrad für die Entscheidung am Ende (Issue #49)
+        "('bicycle',     'Fahrrad',        'tool',   14.0, NULL, NULL, 0, 0, 0.0, NULL)",
     ):
         conn.execute(
             "INSERT OR IGNORE INTO item_catalog (id, name, category, weight_kg, "

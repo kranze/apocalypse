@@ -281,6 +281,62 @@ class RuleBackend(_CompanionRules, LLMBackend):
         name = location.get("name") or location.get("label") or location.get("type") or "ein Ort"
         return f"Du erreichst {name}. Es ist still. Du siehst dich um."
 
+    # --- Epilog (Slice M5) ------------------------------------------------
+    _EPILOGUES = {
+        "stay_secure": (
+            "Du bleibst. Die ersten Tage haben dir gezeigt, dass dieses Viertel dich tragen kann. "
+            "Deine Vorräte reichen, und du weißt, wie du dich am Leben hältst. "
+            "{comp}Die Stille ist immer noch da, aber sie fühlt sich nicht mehr leer an. "
+            "Du richtest dich ein, Tag für Tag, mit klarem Kopf. "
+            "Irgendwann wirst du dich fragen, wer noch da draußen ist. "
+            "Doch das hat Zeit. Du hast ein Dach und einen Plan. "
+            "Die Welt hat dich nicht gebrochen, {name}."),
+        "stay_fragile": (
+            "Du bleibst, weil du nicht weißt, wohin sonst. "
+            "Deine Vorräte sind dünn, und die Tage werden nicht einfacher. "
+            "{comp}Das Wasser, der Strom, die Gerüche: alles wird schlechter. "
+            "Du zählst, was du noch hast, und es ist nicht viel. "
+            "Vielleicht reicht es noch für eine Weile. "
+            "Vielleicht auch nicht. "
+            "Aber du bist noch hier, {name}, und solange das so ist, gibt es eine Chance."),
+        "go_hopeful": (
+            "Du brichst auf, mit Rucksack, Plan und einem Ziel. "
+            "Der Weg ist weit, aber du bist vorbereitet. "
+            "{comp}Hinter dir bleibt das Viertel zurück, still und grau. "
+            "Vor dir liegt etwas, das du seit Tagen nicht mehr hattest: eine Richtung. "
+            "Jemand wartet vielleicht auf dich. "
+            "Mit jedem Kilometer wird die Hoffnung greifbarer. "
+            "Du gehst los, {name}, und du glaubst daran, anzukommen."),
+        "go_desperate": (
+            "Du brichst auf, weil bleiben keine Option mehr ist. "
+            "Dein Rucksack ist leicht, dein Vorrat knapp, dein Ziel ungewiss. "
+            "{comp}Du gehst trotzdem, Schritt für Schritt, in die Stille hinein. "
+            "Niemand weiß, ob der Weg trägt. "
+            "Vielleicht findest du unterwegs, was dir fehlt. "
+            "Vielleicht auch nicht. "
+            "Aber du gehst, {name}, und das ist mehr, als viele konnten."),
+        "death": (
+            "Du bist {cause}. Es war kein dramatischer Moment, eher ein leises Nachlassen. "
+            "Die Kräfte schwanden, und mit ihnen der Wille, weiterzumachen. "
+            "{comp}Die Stadt blieb still, wie sie es seit Tagen war. "
+            "Niemand hörte, wie es zu Ende ging. "
+            "Die Woche, die du überlebt hast, war länger, als sie aussah. "
+            "Du warst da, {name}, und du hast es versucht."),
+    }
+
+    def narrate_epilogue(self, evaluation, profile=None, companion=None, highlights=None) -> str:
+        outcome = evaluation.get("outcome", "stay_fragile")
+        name = (profile or {}).get("name") or "Überlebende:r"
+        comp = ""
+        if companion and companion.get("name"):
+            if companion.get("stage") == "joined":
+                comp = f"{companion['name']} ist an deiner Seite. "
+            elif outcome == "death":
+                comp = f"{companion['name']} bleibt allein zurück. "
+        cause = evaluation.get("cause_of_death") or "gestorben"
+        tpl = self._EPILOGUES.get(outcome, self._EPILOGUES["stay_fragile"])
+        return tpl.format(name=name, comp=comp, cause=cause)
+
     def match_items(self, query, location, candidates, profile=None, history=None) -> dict[str, Any]:
         """Deterministisches Keyword-Matching gegen die vorhandenen Kandidaten
         (kein Netz): Item-Name/-ID-Wörter und Oberbegriffe je Kategorie."""

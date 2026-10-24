@@ -62,6 +62,19 @@ class LLMBackend:
         (aus ``chatlog.recent``); Default: None (rückwärtskompatibel)."""
         return ""
 
+    def narrate_epilogue(
+        self,
+        evaluation: dict[str, Any],
+        profile: dict | None = None,
+        companion: dict | None = None,
+        highlights: list[str] | None = None,
+    ) -> str:
+        """Epilog (6-10 Sätze, reiner Text) zur *fertigen* Bewertung des Sim-Kerns
+        (``evaluation`` = outcome, Score, Komponenten, ggf. cause_of_death). Das LLM
+        erzählt nur; Outcome/Score kann es nicht ändern. Default: leer (der Sim-Kern
+        nimmt dann das Stub-Template)."""
+        return ""
+
     def describe_survivor(
         self,
         identity: dict[str, Any],

@@ -10,7 +10,7 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   />
-  <link rel="stylesheet" href="/style.css?v=11" />
+  <link rel="stylesheet" href="/style.css?v=12" />
 </head>
 <body>
   <div id="map"></div>
@@ -31,6 +31,7 @@
     <div class="needbar"><label>Wasser</label><div class="bar"><span id="water-fill"></span></div><span id="water-val" class="val">—</span></div>
     <div class="needbar"><label>Mobilfunk</label><div class="bar"><span id="cell-fill"></span></div><span id="cell-val" class="val">—</span></div>
     <div class="needbar"><label>Internet</label><div class="bar"><span id="net-fill"></span></div><span id="net-val" class="val">—</span></div>
+    <div class="needbar"><label>Bewohnbarkeit</label><div class="bar"><span id="hab-fill"></span></div><span id="hab-val" class="val">—</span></div>
     <div class="needbar"><label>Akku</label><div class="bar"><span id="batt-fill"></span></div><span id="batt-val" class="val">—</span></div>
     <div class="row needs" id="infra-note"></div>
 
@@ -91,11 +92,36 @@
     <ul id="panel-inv"></ul>
   </div>
 
-  <!-- Endzustände (Platzhalter für M5) -->
+  <!-- Entscheidung (M5) -->
+  <div id="decide-overlay" class="overlay hidden">
+    <div class="sheet decide-sheet">
+      <h1>Bleiben oder gehen</h1>
+      <p id="decide-forced" class="sub hidden">Die Woche ist um.</p>
+      <p id="decide-sub" class="sub">Diese Entscheidung ist endgültig.</p>
+      <div id="decide-summary" class="decide-summary"></div>
+      <div class="decide-choices">
+        <button id="dec-stay" class="choice-btn" type="button">Bleiben</button>
+        <button id="dec-go" class="choice-btn" type="button">Gehen</button>
+      </div>
+      <div id="decide-go" class="hidden">
+        <h3>Wie?</h3>
+        <div id="decide-transports" class="decide-list"></div>
+        <h3>Wohin?</h3>
+        <div id="decide-dests" class="decide-list"></div>
+      </div>
+      <button id="decide-confirm" type="button" disabled>Entscheidung bestätigen</button>
+      <button id="decide-cancel" class="secondary" type="button">Noch nicht</button>
+    </div>
+  </div>
+
+  <!-- Ending (M5) -->
   <div id="endscreen" class="overlay hidden">
-    <div class="sheet narrow">
+    <div class="sheet ending-sheet">
       <h1 id="end-title">—</h1>
-      <p id="end-text" class="sub"></p>
+      <p id="end-sub" class="sub"></p>
+      <div id="end-epilogue" class="epilogue"></div>
+      <div id="end-components" class="end-components"></div>
+      <div id="end-stats" class="end-stats"></div>
       <button id="btn-end-newgame">Neues Spiel</button>
     </div>
   </div>
@@ -141,6 +167,6 @@
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
   ></script>
-  <script src="/app.js?v=13"></script>
+  <script src="/app.js?v=14"></script>
 </body>
 </html>

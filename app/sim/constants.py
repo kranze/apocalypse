@@ -261,3 +261,52 @@ COMPANION_TALK_MINUTES = 10
 COMPANION_SPEECH_MAX = 600
 COMPANION_SUMMARY_MAX = 400
 COMPANION_PROFILE_TEXT_MAX = 300
+
+
+# --- Ende & Bewertung (Slice M5, Issue #49) ----------------------------------
+DECISION_FROM_DAY = 5               # ab diesem (0-basierten) Kalendertag ist "decide" wählbar
+DECISION_DEADLINE_DAY = 7           # Tag 7 ...
+DECISION_DEADLINE_HOUR = 7          # ... 07:00: danach NUR noch "decide"
+
+# Bewohnbarkeit: Gewichte der Teile (Summe 1.0), alle Teile 0..1 (1 = gut)
+HAB_WEIGHTS = {"decay": 0.25, "water": 0.20, "power": 0.10, "supplies": 0.25, "disease": 0.20}
+HAB_LABEL_OK = 0.60                 # >= "bewohnbar"
+HAB_LABEL_TENSE = 0.35              # >= "angespannt", sonst "kritisch"
+HAB_DECAY_FULL_DAYS = 10.0          # Geruch/Verwesung wächst linear bis zu diesem Tag
+HAB_DENSITY_RADIUS_M = 250.0        # Bebauungsdichte: Gebäude in diesem Umkreis
+HAB_DENSITY_FULL = 40               # ab so vielen Gebäuden gilt die Dichte als 1.0
+HAB_SUPPLY_RADIUS_M = 600.0         # erreichbare, noch nicht durchsuchte Orte
+HAB_SUPPLY_SUPERMARKET = 3.0        # Wert eines unberührten Supermarkts
+HAB_SUPPLY_HOUSE = 0.5              # Wert eines unberührten Hauses
+HAB_SUPPLY_FULL = 6.0               # ab dieser Summe: Vorräte = 1.0
+HAB_DISEASE_FULL_DAYS = 10.0        # Krankheitsrisiko wächst bis zu diesem Tag
+HAB_DISEASE_MAX = 0.8               # höchstes Risiko ohne Wissen
+HAB_DISEASE_KNOWLEDGE_FACTOR = 0.35  # Rest-Risiko mit "disease_control"
+
+# Bewertung: Gewichte je Wahl (Summe je 1.0)
+END_WEIGHTS_STAY = {"water": 0.20, "food": 0.20, "health": 0.15, "knowledge": 0.10,
+                    "companion": 0.10, "habitability": 0.25}
+END_WEIGHTS_GO = {"water": 0.15, "food": 0.15, "health": 0.15, "knowledge": 0.10,
+                  "companion": 0.10, "gear": 0.20, "destination": 0.15}
+END_TARGET_DAYS_STAY = 7.0          # Vorrat für so viele Tage = Wert 1.0
+END_TARGET_DAYS_GO = 5.0
+END_WATER_TREATMENT_BONUS_DAYS = 5.0  # Wasseraufbereitung (nur bleiben) streckt den Wasservorrat
+END_THRESHOLD_STAY_SECURE = 0.60
+END_THRESHOLD_GO_HOPEFUL = 0.50
+END_COMPANION_JOINED_BASE = 0.5     # Begleitung: joined = BASE + (1-BASE)*Vertrauen
+END_COMPANION_MET = 0.15
+END_TRANSPORT_VALUE = {"foot": 0.20, "bike": 0.70, "car": 0.95}
+END_GEAR_TRANSPORT_SHARE = 0.6      # Rest: mitgeführte Ausrüstung
+END_GEAR_ITEMS = ("flashlight", "first_aid_kit", "bandage", "rope", "powerbank",
+                  "duct_tape", "hammer")
+END_GEAR_FULL_COUNT = 4             # so viele verschiedene Ausrüstungsteile = 1.0
+END_DEST_CONTACT = 0.90
+END_DEST_DIRECTION = 0.25
+# Relevanz der Wissenspakete je Wahl (0..1); Wert = Summe(geladen) / Summe(alle)
+END_KNOWLEDGE_STAY = {"water_treatment": 1.0, "disease_control": 0.8, "food_preservation": 0.6,
+                      "fire_cooking": 0.5, "shelter_warmth": 0.5, "first_aid": 0.5,
+                      "wild_plants": 0.4, "solar_batteries": 0.3}
+END_KNOWLEDGE_GO = {"offline_maps": 1.0, "bike_repair": 0.7, "car_fuel": 0.7, "first_aid": 0.6,
+                    "radio_basics": 0.5, "wild_plants": 0.4, "solar_batteries": 0.3,
+                    "water_treatment": 0.5}
+EPILOGUE_MAX_CHARS = 3000
