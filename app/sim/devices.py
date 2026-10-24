@@ -54,45 +54,64 @@ def grant(conn, gid: int, item_id: str, charge_per_unit: float, units: float = 1
     )
 
 
-def sync(conn, gid: int) -> dict[str, dict[str, float]]:
-    """Gleicht device_state mit dem Inventar ab (neue Einheiten kommen mit
-    ``DEVICE_FOUND_CHARGE``, verlorene nehmen ihre Ladung mit) und wendet den
-    Leerlaufverbrauch seit ``updated_tick`` an. Liefert {item_id: {units, charge}}."""
+def _compute_sync(conn, gid: int) -> tuple[dict[str, dict[str, float]], list[str]]:
+    """Reine Berechnung des abgeglichenen Gerätezustands (kein Schreiben).
+    Liefert ({item_id: {units, charge}}, [item_ids ohne Besitz, deren Zeile weg muss])."""
     now = _tick(conn)
     owned = _owned(conn, gid)
     out: dict[str, dict[str, float]] = {}
+    stale: list[str] = []
+    for item_id in DEVICES:
+        qty = owned.get(item_id, 0.0)
+        row = conn.execute(
+            "SELECT units, charge, updated_tick FROM device_state "
+            "WHERE group_id = ? AND item_id = ?;", (gid, item_id),
+        ).fetchone()
+        if qty <= 0:
+            if row is not None:
+                stale.append(item_id)
+            continue
+        if row is None:
+            units, charge, last = qty, qty * constants.DEVICE_FOUND_CHARGE, now
+        else:
+            units, charge, last = row["units"], row["charge"], row["updated_tick"]
+            if qty > units:
+                charge += (qty - units) * constants.DEVICE_FOUND_CHARGE
+            units = qty
+            charge = min(charge, units)
+        hours = max(0, now - last) / 60.0
+        idle = constants.DEVICE_DRAIN_IDLE_PER_H.get(item_id, 0.0)
+        charge = max(0.0, charge - idle * hours * units)
+        out[item_id] = {"units": units, "charge": charge}
+    return out, stale
+
+
+def peek(conn, gid: int) -> dict[str, dict[str, float]]:
+    """Wie ``sync``, aber REIN lesend (lesende Endpunkte/Planer; Issue #52).
+    Der Leerlaufverbrauch wird nur eingerechnet, nicht gespeichert."""
+    return _compute_sync(conn, gid)[0]
+
+
+def sync(conn, gid: int) -> dict[str, dict[str, float]]:
+    """Gleicht device_state mit dem Inventar ab (neue Einheiten kommen mit
+    ``DEVICE_FOUND_CHARGE``, verlorene nehmen ihre Ladung mit) und wendet den
+    Leerlaufverbrauch seit ``updated_tick`` an — und SCHREIBT das Ergebnis (nur
+    für Aktionen). Liefert {item_id: {units, charge}}."""
+    now = _tick(conn)
+    out, stale = _compute_sync(conn, gid)
     with conn:
-        for item_id in DEVICES:
-            qty = owned.get(item_id, 0.0)
-            row = conn.execute(
-                "SELECT units, charge, updated_tick FROM device_state "
-                "WHERE group_id = ? AND item_id = ?;", (gid, item_id),
-            ).fetchone()
-            if qty <= 0:
-                if row is not None:
-                    conn.execute(
-                        "DELETE FROM device_state WHERE group_id = ? AND item_id = ?;",
-                        (gid, item_id))
-                continue
-            if row is None:
-                units, charge, last = qty, qty * constants.DEVICE_FOUND_CHARGE, now
-            else:
-                units, charge, last = row["units"], row["charge"], row["updated_tick"]
-                if qty > units:
-                    charge += (qty - units) * constants.DEVICE_FOUND_CHARGE
-                units = qty
-                charge = min(charge, units)
-            hours = max(0, now - last) / 60.0
-            idle = constants.DEVICE_DRAIN_IDLE_PER_H.get(item_id, 0.0)
-            charge = max(0.0, charge - idle * hours * units)
+        for item_id in stale:
+            conn.execute(
+                "DELETE FROM device_state WHERE group_id = ? AND item_id = ?;",
+                (gid, item_id))
+        for item_id, v in out.items():
             conn.execute(
                 "INSERT INTO device_state (group_id, item_id, units, charge, updated_tick) "
                 "VALUES (?,?,?,?,?) ON CONFLICT(group_id, item_id) DO UPDATE SET "
                 "units=excluded.units, charge=excluded.charge, "
                 "updated_tick=excluded.updated_tick;",
-                (gid, item_id, units, charge, now),
+                (gid, item_id, v["units"], v["charge"], now),
             )
-            out[item_id] = {"units": units, "charge": charge}
     return out
 
 
@@ -100,7 +119,7 @@ def status(conn, gid: int) -> list[dict[str, Any]]:
     """Geräteliste für HUD/API: pct = mittlere Ladung je Einheit in Prozent."""
     names = dict(conn.execute(
         "SELECT id, name FROM item_catalog WHERE category = 'device';").fetchall())
-    st = sync(conn, gid)
+    st = peek(conn, gid)
     return [
         {"item_id": i, "name": names.get(i, i), "units": v["units"],
          "charge": round(v["charge"], 4),
@@ -111,8 +130,8 @@ def status(conn, gid: int) -> list[dict[str, Any]]:
 
 def best_online_device(conn, gid: int) -> tuple[str, float] | None:
     """Gerät (smartphone/laptop) mit der meisten Restladung (Summe) oder None, wenn
-    keines über ``DEVICE_MIN_CHARGE`` liegt. Liefert (item_id, charge)."""
-    st = sync(conn, gid)
+    keines über ``DEVICE_MIN_CHARGE`` liegt. Liefert (item_id, charge). Rein lesend."""
+    st = peek(conn, gid)
     best = None
     for i in ONLINE_DEVICES:
         v = st.get(i)
@@ -139,6 +158,7 @@ def online_minutes_available(conn, gid: int) -> int:
 def drain_online(conn, gid: int, minutes: int) -> str | None:
     """Zieht ``minutes`` Online-Verbrauch vom besten Gerät ab (nie unter 0).
     Liefert die item_id des genutzten Geräts."""
+    sync(conn, gid)  # Zustand persistieren (Leerlaufverbrauch), bevor ein UPDATE greift
     best = best_online_device(conn, gid)
     if best is None:
         return None
@@ -172,7 +192,7 @@ def network_quality(conn, location_id: int | None) -> dict[str, Any]:
 
 # --- Laden ---------------------------------------------------------------
 def _deficits(conn, gid: int) -> dict[str, dict[str, float]]:
-    st = sync(conn, gid)
+    st = peek(conn, gid)
     return {i: {**v, "deficit": v["units"] - v["charge"]} for i, v in st.items()}
 
 
@@ -239,7 +259,7 @@ def charge_plan(conn, gid: int, location_id: int | None,
 
 def charge_block_reason(conn, gid: int) -> str:
     """Warum es keinen Ladeplan gibt: ``already_full`` oder ``no_power``."""
-    if all(v["units"] - v["charge"] <= 0.02 for v in sync(conn, gid).values()):
+    if all(v["units"] - v["charge"] <= 0.02 for v in peek(conn, gid).values()):
         return "already_full"
     return "no_power"
 
@@ -247,6 +267,7 @@ def charge_block_reason(conn, gid: int) -> str:
 def apply_charge(conn, gid: int, plan: dict[str, Any], minutes: int | None = None) -> dict[str, float]:
     """Bucht einen Ladeplan (ggf. anteilig, wenn die Aktion unterbrochen wurde)."""
     frac = 1.0 if minutes is None else max(0.0, min(1.0, minutes / plan["minutes"]))
+    sync(conn, gid)  # Zeilen/Stand persistieren, bevor die Ladung per UPDATE gebucht wird
     now = _tick(conn)
     done: dict[str, float] = {}
     with conn:

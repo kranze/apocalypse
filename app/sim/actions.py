@@ -668,14 +668,20 @@ def _do_search_survivors(conn, cid, action) -> dict[str, Any]:
         # macht einen Überlebenden zum Companion (inkl. Treffpunkt + Interrupt).
         contact = companion.on_contact(conn, "reply", text=rec["reply"])
         if contact:
+            # Nur die konkrete Meldung („Jemand hat geantwortet: … Treffpunkt: …“) —
+            # kein zweiter, generischer Interrupt.
             events += contact
         else:
+            # Kein Kontakt möglich (z.B. noch kein Treffpunkt): nur dann die generische.
             with conn:
                 events.append(emit_event(
                     conn, _tick_now(conn), "contact", "Jemand hat geantwortet…",
                     severity=DECISION, subject_type="character", subject_id=cid,
                     payload={"text": rec["reply"]}))
-        narration = (f"Du suchst nach anderen Überlebenden. Jemand hat geantwortet. "
+        # Mit Kontakt steht der Antworttext schon in der Kontakt-Meldung (nicht doppeln).
+        narration = ("Du suchst nach anderen Überlebenden. Es kommt eine Antwort."
+                     if contact else
+                     f"Du suchst nach anderen Überlebenden. Jemand hat geantwortet. "
                      f"{rec['reply']}")
     else:
         narration = "Du rufst nach anderen Überlebenden. Keine Antwort."
@@ -730,7 +736,7 @@ def _do_download(conn, cid, action) -> dict[str, Any]:
 
 def _do_charge(conn, cid, action) -> dict[str, Any]:
     gid = _group_id(conn, cid)
-    if not devices.sync(conn, gid):
+    if not devices.peek(conn, gid):
         return _reject(conn, "charge", cid, "no_device", _ONLINE_HINTS["no_device"])
     here = _location_here(conn, cid, constants.LOOT_REACH_M)
     plan = devices.charge_plan(

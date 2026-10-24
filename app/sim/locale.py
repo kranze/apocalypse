@@ -271,6 +271,24 @@ def professions() -> list[tuple[str, float]]:
 
 
 @functools.lru_cache(maxsize=1)
+def _profession_labels_de() -> dict[str, str]:
+    """{englischer Schlüssel: deutsche Bezeichnung} aus professions.json (3. Feld)."""
+    with open(_PROFESSIONS_JSON, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return {e[0]: e[2] for e in data["professions"] if len(e) > 2}
+
+
+def profession_de(name: str | None) -> str | None:
+    """Deutsche Anzeigebezeichnung eines Berufs. Der englische Schlüssel bleibt die
+    gespeicherte/seed-relevante Identität (Determinismus); nur die Ausgabe wird
+    übersetzt. Unbekannte Werte (z.B. Freitext des Spielers, schon deutsche Labels)
+    kommen unverändert zurück."""
+    if not name:
+        return name
+    return _profession_labels_de().get(name, name)
+
+
+@functools.lru_cache(maxsize=1)
 def age_weights() -> list[tuple[tuple[int, int], float]]:
     """Return age bracket weights as ((lo, hi), weight) tuples.
 

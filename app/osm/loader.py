@@ -79,12 +79,13 @@ def load_bbox_combined(
         min_lat, min_lon, max_lat, max_lon, force=force_refresh
     )
     records = parser.parse(data)
-    world_seed = db.get_world_seed(conn)
-    count = _upsert_records(conn, records, world_seed)
     # Straßen-Teil in den additiven prozessweiten Graph mergen (Prozess-State,
     # kein DB-Schreiben — Eisernes Prinzip gewahrt). merge_ways ist idempotent.
+    # Bewusst VOR dem ersten DB-Schreiben: Netz + CPU-Arbeit (fetch/parse/merge)
+    # laufen ohne offene Schreib-Transaktion (Issue #52); erst der kurze Upsert hält sie.
     _roads._graph.merge_ways(data)
-    return count
+    world_seed = db.get_world_seed(conn)
+    return _upsert_records(conn, records, world_seed)
 
 
 def load_bbox(

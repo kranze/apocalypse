@@ -10,12 +10,22 @@ import sqlite3
 
 from . import config
 
+BUSY_TIMEOUT_MS = 10_000
+
 
 def get_connection() -> sqlite3.Connection:
-    """Öffnet die DB mit aktivierten Foreign Keys und Row-Factory."""
+    """Öffnet die DB mit aktivierten Foreign Keys und Row-Factory.
+
+    WAL: Leser blockieren den Schreiber nicht (und umgekehrt) — das Frontend feuert
+    beim Seitenaufbau mehrere Anfragen parallel. ``busy_timeout`` lässt einen
+    zweiten Schreiber warten statt sofort mit „database is locked“ zu scheitern.
+    """
     config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH, timeout=BUSY_TIMEOUT_MS / 1000.0)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")  # in WAL sicher genug, deutlich schneller
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 

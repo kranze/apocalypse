@@ -326,6 +326,7 @@ def get_graph(
     radius_m: int | None = None,
     *,
     force: bool = False,
+    fetch: bool = True,
 ) -> RoadGraph:
     """Rückwärtskompatible Funktion: stellt sicher, dass Straßen für den
     angefragten Bereich im additiven Graph vorhanden sind, und gibt den
@@ -334,6 +335,8 @@ def get_graph(
     Ohne Argumente: Fallback auf Config-Viertel (Tests/CLI).
     ``force=True``: ignoriert den geladenen-Chunk-Cache für diesen Bereich
     (fetcht ggf. erneut, nützlich bei Tests / manuellem Reset).
+    ``fetch=False``: kein Netz-I/O, nur der bereits geladene Graph (für Aufrufer
+    innerhalb einer offenen Schreib-Transaktion, z.B. den Tick).
     """
     global _graph_key
 
@@ -357,9 +360,10 @@ def get_graph(
                 _roads_loaded_chunks.discard((cx, cy))
 
     deg_radius = radius_m / _M_PER_DEG_LAT
-    ensure_roads_for_bbox(
-        lat - deg_radius, lon - deg_radius,
-        lat + deg_radius, lon + deg_radius,
-    )
+    if fetch:
+        ensure_roads_for_bbox(
+            lat - deg_radius, lon - deg_radius,
+            lat + deg_radius, lon + deg_radius,
+        )
     _graph_key = key
     return _graph

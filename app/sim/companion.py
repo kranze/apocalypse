@@ -23,7 +23,8 @@ from typing import Any
 
 from ..llm import get_backend
 from ..llm.base import COMPANION_INTENTS
-from . import chatlog, constants, effects, looting, movement, provision, rng, survivors
+from . import chatlog, constants, effects, looting, movement, online, provision, rng, survivors
+from .locale import profession_de
 from .events import DECISION, SOFT, emit_event
 
 INTENTS = tuple(COMPANION_INTENTS)
@@ -145,7 +146,7 @@ def view(conn) -> dict[str, Any] | None:
         (row["meeting_location_id"],)).fetchone() if row["meeting_location_id"] else None
     return {
         "character_id": row["character_id"], "stage": row["stage"],
-        "name": c["name"], "age": age, "profession": c["profession"],
+        "name": c["name"], "age": age, "profession": profession_de(c["profession"]),
         "personality": (prof or {}).get("personality") or trait_text(tr),
         "short_bio": (prof or {}).get("short_bio") or "",
         "lat": c["lat"], "lon": c["lon"],
@@ -234,7 +235,7 @@ def _spawn_local_survivor(conn, lat, lon, seed) -> None:
         "VALUES (?, ?, ?, ?, ?, ?);",
         (s_lat, s_lon, sex, -(age * 525_600), s_lat, s_lon))
     eps = 1e-7
-    survivors.materialize_in_bbox(conn, s_lat - eps, s_lon - eps, s_lat + eps, s_lon + eps)
+    survivors.materialize_in_bbox_tx(conn, s_lat - eps, s_lon - eps, s_lat + eps, s_lon + eps)
 
 
 def _pick_survivor(conn, anchor, seed, radius_m) -> int | None:
@@ -246,7 +247,7 @@ def _pick_survivor(conn, anchor, seed, radius_m) -> int | None:
         return cid
     dlat = radius_m / 111_320.0
     dlon = dlat / max(0.1, math.cos(math.radians(lat)))
-    survivors.materialize_in_bbox(conn, lat - dlat, lon - dlon, lat + dlat, lon + dlon)
+    survivors.materialize_in_bbox_tx(conn, lat - dlat, lon - dlon, lat + dlat, lon + dlon)
     cid = _nearest_survivor_char(conn, lat, lon, radius_m)
     if cid is None:
         _spawn_local_survivor(conn, lat, lon, seed)
@@ -296,7 +297,9 @@ def ensure_contact(conn, source: str, *, text: str | None = None,
          w["tick"], w["tick"]))
     conn.execute("UPDATE online_contacts SET handled = 1 "
                  "WHERE kind IN ('reply', 'beacon') AND handled = 0;")
-    msg = (f"Jemand hat geantwortet: {text or _SOURCE_TEXT.get(source, 'Eine Nachricht kommt an.')} "
+    # Antworttext passend zur einen Person (und ihrem Beruf), nicht „wir“.
+    reply = online.personalize_reply(text, profession_de(comp["profession"]))
+    msg = (f"Jemand hat geantwortet: {reply or _SOURCE_TEXT.get(source, 'Eine Nachricht kommt an.')} "
            f"Treffpunkt: {_loc_name(loc)}.")
     _say(conn, cid, "narrator", msg)
     return [emit_event(conn, w["tick"], "companion", msg, severity=DECISION,
@@ -507,7 +510,7 @@ def _persona(conn, row) -> dict[str, Any]:
     tr = traits(conn, row["character_id"])
     return {
         "name": c["name"], "age": survivors._survivor_age(conn, c["birthdate"]),
-        "profession": c["profession"],
+        "profession": profession_de(c["profession"]),
         "personality": prof.get("personality") or trait_text(tr),
         "short_bio": prof.get("short_bio") or "", "demeanor": prof.get("demeanor") or "",
     }
@@ -689,7 +692,7 @@ def _apply(conn, row, norm, now_tick: int, events: list[dict]) -> None:
         events.append(_leave(conn, get(conn), now_tick, "auf eigenen Wunsch"))
     elif name == "share_info":
         if norm["topic"] == "profession":
-            info = f"{c['name']} war früher: {c['profession']}."
+            info = f"{c['name']} war früher: {profession_de(c['profession'])}."
         else:
             places = _known_places(conn, c)
             info = (f"{c['name']} kennt hier in der Nähe: "

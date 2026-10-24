@@ -89,16 +89,23 @@ def route_to(
     if char["lat"] is None or char["lon"] is None:
         return {"ok": False, "reason": "no_position"}
 
+    # Netz-I/O nie in einer offenen Schreib-Transaktion (Issue #52: der Tick hielt
+    # sonst die DB-Sperre über mehrere Overpass-Requests). Läuft der Aufrufer schon
+    # in einer Transaktion (Agenten-Tick), nur den bereits geladenen Graph nutzen;
+    # fehlt das Straßennetz, bleibt die Luftlinie der Fallback.
+    may_fetch = not conn.in_transaction
+
     # Korridor-Chunks entlang der Luftlinie Start→Ziel vorladen (begrenzt auf cap=8).
     # Fehler werden ignoriert (Fallback auf Luftlinie bleibt).
-    _ensure_corridor_roads(
-        char["lat"], char["lon"], lat, lon, cap=8
-    )
+    if may_fetch:
+        _ensure_corridor_roads(
+            char["lat"], char["lon"], lat, lon, cap=8
+        )
 
     # Graph: anchor_lat/lon des Spielers (rückwärtskompatibel, monkeypatching in Tests).
     anchor_lat = char["home_lat"] if char["home_lat"] is not None else char["lat"]
     anchor_lon = char["home_lon"] if char["home_lon"] is not None else char["lon"]
-    graph = roads.get_graph(anchor_lat, anchor_lon)
+    graph = roads.get_graph(anchor_lat, anchor_lon, fetch=may_fetch)
     start = graph.nearest_node(char["lat"], char["lon"])
     goal = graph.nearest_node(lat, lon)
     if start is None or goal is None:

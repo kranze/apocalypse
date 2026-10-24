@@ -23,7 +23,7 @@ from .sim import (
 from .sim import chunks as chunks_mod
 from .sim import survivor_sim, survivors as survivors_mod
 from .sim.identity import generate_identity
-from .sim.locale import region_for
+from .sim.locale import profession_de, region_for
 
 # Serialisiert parallele Chunk-Lade-Requests (verhindert parallele Overpass-Bursts).
 # FastAPI-sync-Endpunkte laufen im Threadpool → normales threading.Lock ausreichend.
@@ -663,7 +663,7 @@ def get_survivor(sid: int) -> dict:
         "name": identity["name"],
         "age": max(0, age),
         "sex": row["sex"] if row["sex"] else identity["sex"],
-        "profession": identity["profession"],
+        "profession": profession_de(identity["profession"]),
         "region": region,
         "alive": bool(row["alive"]),
         "group_id": row["group_id"],
@@ -748,7 +748,7 @@ def get_survivor_group(gid: int) -> dict:
             "id": m["id"],
             "name": identity["name"],
             "age": age,
-            "profession": profession,
+            "profession": profession_de(profession),
         })
 
     return {

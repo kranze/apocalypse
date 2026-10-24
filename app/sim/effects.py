@@ -418,7 +418,7 @@ def _v_charge_device(conn, char, eff, ctx, st):
     """Gerät laden — dieselben Regeln wie die Aktion ``charge``: Stromnetz nur bei
     lokalem Strom, sonst Powerbank (``devices.charge_plan``)."""
     gid = _group_of(conn, char)
-    if not devices.sync(conn, gid):
+    if not devices.peek(conn, gid):
         return (False, "no_device")
     source = eff.get("source")
     if source not in (None, "grid", "powerbank"):

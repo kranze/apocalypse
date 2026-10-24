@@ -78,11 +78,33 @@ def mark_news_read(conn, fragment_id: str, tick: int) -> None:
 
 
 # --- Überlebenden-Suche ---------------------------------------------------
-_REPLIES = (
-    "Eine kurze Nachricht: „Wir sind zu zweit und suchen Wasser. Seid ihr noch da?“",
-    "Eine Sprachnachricht, stark verrauscht: Jemand nennt einen Treffpunkt am Stadtrand.",
-    "Eine Nachricht ohne Absender: „Ich lebe. Ich bleibe, wo ich bin. Meldet euch.“",
+# Genau EINE Person antwortet (es kommt genau ein Companion) — also Ich-Form/Singular.
+# (neutraler Text, Variante mit Bezug auf den Beruf der antwortenden Person); die
+# Berufsvariante setzt der Erstkontakt ein (``personalize_reply``), sobald feststeht,
+# wer geantwortet hat. ``{beruf}`` = deutsche Berufsbezeichnung.
+_REPLY_TEMPLATES = (
+    ("Eine kurze Nachricht: „Ich bin allein und suche Wasser. Seid ihr noch da?“",
+     "Eine kurze Nachricht: „Ich war {beruf} und suche jetzt Wasser. Seid ihr noch da?“"),
+    ("Eine Sprachnachricht, stark verrauscht: Jemand nennt einen Treffpunkt am Stadtrand.",
+     "Eine Sprachnachricht, stark verrauscht: Eine Person, früher {beruf}, nennt einen "
+     "Treffpunkt am Stadtrand."),
+    ("Eine Nachricht ohne Absender: „Ich lebe. Ich bleibe, wo ich bin. Meldet euch.“",
+     "Eine Nachricht ohne Absender: „Ich lebe, früher {beruf}. Ich bleibe, wo ich bin. "
+     "Meldet euch.“"),
 )
+_REPLIES = tuple(t[0] for t in _REPLY_TEMPLATES)
+
+
+def personalize_reply(text: str | None, profession_de: str | None) -> str | None:
+    """Gibt zu einem gespeicherten Antworttext die Variante mit Bezug auf den Beruf der
+    antwortenden Person zurück (nur wenn der Text eine bekannte Vorlage ist und ein
+    Beruf bekannt ist; sonst unverändert). Rein, ohne DB."""
+    if not text or not profession_de:
+        return text
+    for plain, personal in _REPLY_TEMPLATES:
+        if text == plain:
+            return personal.format(beruf=profession_de)
+    return text
 
 
 def search_tries(conn) -> int:
@@ -208,7 +230,6 @@ def hud_infra(conn, group_id: int, location_id: int | None) -> dict[str, Any]:
     else:
         power, water, scope = w["power"], w["water"], "world"
     net = devices.network_quality(conn, location_id)
-    conn.commit()
     return {
         "phase": w["phase"], "day": w["day"], "scope": scope,
         "power": power, "water": water,

@@ -148,7 +148,7 @@ def ensure_chunk_loaded(
     # Locations geladen → Wohnhaus-Kandidaten vorhanden; dann Snap).
     # Idempotent durch materialized=0-Filter; Fehler darf Chunk-Load nicht crashen.
     try:
-        _survivors.materialize_in_bbox(conn, *chunk_bbox(cx, cy))
+        _survivors.materialize_in_bbox_tx(conn, *chunk_bbox(cx, cy))
     except Exception:
         pass  # Materialisierungsfehler ist nicht kritisch
 
@@ -264,9 +264,10 @@ def ensure_bbox_bulk(
     # Survivors für die gesamte Bbox einmal lazy materialisieren (idempotent;
     # Locations sind jetzt vorhanden → Wohnhaus-Snap hat Kandidaten).
     try:
-        _survivors.materialize_in_bbox(conn, min_lat, min_lon, max_lat, max_lon)
+        _survivors.materialize_in_bbox_tx(conn, min_lat, min_lon, max_lat, max_lon)
+        conn.commit()
     except Exception:
-        pass  # Materialisierungsfehler ist nicht kritisch
+        conn.rollback()  # Materialisierungsfehler ist nicht kritisch
 
     return {
         "loaded_chunks": len(cells),

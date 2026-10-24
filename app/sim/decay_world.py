@@ -92,12 +92,12 @@ def _store(conn: sqlite3.Connection, loc_id: int, v: dict[str, float], tick: int
 
 
 def infra_for(conn: sqlite3.Connection, location_id: int) -> dict[str, Any]:
-    """Aktueller Infrastruktur-Zustand eines Orts (lazy berechnet, Zeile wird
-    geschrieben/aktualisiert). Gibt power/water/refrigeration/structural/
-    overgrowth/updated_tick zurück."""
+    """Aktueller Infrastruktur-Zustand eines Orts, REIN berechnet (kein Schreiben —
+    lesende Endpunkte dürfen die DB nicht ändern, Issue #52). Persistiert wird nur
+    im Tick (``advance``). Gibt power/water/refrigeration/structural/overgrowth/
+    updated_tick zurück."""
     w = _world(conn)
     v = values_at(w["world_seed"], location_id, w["tick"])
-    _store(conn, location_id, v, w["tick"])
     return {**v, "updated_tick": w["tick"]}
 
 

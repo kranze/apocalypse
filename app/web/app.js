@@ -1000,12 +1000,20 @@ async function startGame(state) {
   const p = state && state.player;
   const center = (p && p.lat != null) ? [p.lat, p.lon] : (await getJSON("/api/info")).center;
   if (!_mapReady) buildMap(center); else map.setView(center, 16);
+  // HUD war eben noch hidden: Karte braucht ihre Größe, sonst ist die Bbox leer/klein.
+  map.invalidateSize();
   if (!_hudWired) wireHud();
   await loadChatHistory();
   await loadLocations();
   await refreshState();
   await loadActionBar();
   await refreshCompanion();
+  // Bestehender Spielstand (z.B. nach Neustart): Chunks der Umgebung nachladen, sonst
+  // gibt es keine Orte, keinen Treffpunkt und keinen Companion (wie nach dem Onboarding).
+  ensureChunksInView()
+    .then(() => refreshLocationsInView())
+    .then(() => refreshCompanion())
+    .catch(() => {});
 }
 
 function showIntro(text) {

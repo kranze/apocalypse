@@ -682,3 +682,31 @@ def test_companion_group_not_player_group_before_join(conn):
     assert row["group_id"] != 1
     assert conn.execute("SELECT is_player_group FROM groups WHERE id=?;",
                         (row["group_id"],)).fetchone()[0] == 0
+
+
+# --- Issue #52: Antworttext, Interrupt-Dopplung, deutsche Berufe -------------
+def test_reply_text_fits_single_person_and_profile(conn):
+    from app.sim import online
+    make_world(conn)
+    for plain in online._REPLIES:
+        assert "zu zweit" not in plain and "Wir " not in plain
+    ev = companion.on_contact(conn, "reply", text=online._REPLIES[0])
+    assert len(ev) == 1
+    assert "zu zweit" not in ev[0]["message"]
+    prof = companion.view(conn)["profession"]
+    assert prof in ev[0]["message"]
+
+
+def test_professions_are_german():
+    from app.sim.locale import professions, profession_de
+    assert profession_de("Farmer / Agricultural Worker") == "Landwirt/in"
+    assert profession_de("Freitext") == "Freitext"
+    assert profession_de(None) is None
+    # Determinismus: englische Schlüssel + Gewichte unverändert
+    assert professions()[0] == ("Farmer / Agricultural Worker", 0.28)
+
+
+def test_contact_yields_single_specific_interrupt(conn):
+    make_world(conn)
+    ev = companion.on_contact(conn, "reply", text="Eine Nachricht.")
+    assert sum("Jemand hat geantwortet" in e["message"] for e in ev) == 1

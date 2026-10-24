@@ -184,14 +184,29 @@ def materialize_in_bbox(
     max_lat: float,
     max_lon: float,
 ) -> list[int]:
+    """Wie ``materialize_in_bbox_tx``, committet aber am Ende (eigenständiger Aufruf,
+    z.B. aus dem Endpunkt). Für Aufrufer mit offener Transaktion (Tick, Companion-
+    Kontakt) die Variante ``materialize_in_bbox_tx`` nehmen."""
+    ids = materialize_in_bbox_tx(conn, min_lat, min_lon, max_lat, max_lon)
+    conn.commit()
+    return ids
+
+
+def materialize_in_bbox_tx(
+    conn: sqlite3.Connection,
+    min_lat: float,
+    min_lon: float,
+    max_lat: float,
+    max_lon: float,
+) -> list[int]:
     """Materialisiert noch nicht materialisierte Überlebende in der Bbox als NPCs.
+    OHNE Commit: die Transaktion hält der Aufrufer (Tick: eine Transaktion pro Tick).
 
     Für jeden Überlebenden mit ``materialized=0`` im angegebenen Rechteck wird
     eine Minimal-NPC-Zeile in ``characters`` angelegt (type='survivor').
     Danach werden ``materialized=1`` und ``character_id`` gesetzt.
 
     Idempotent: bereits materialisierte Zeilen werden übersprungen.
-    Alles in einer Transaktion.
 
     Returns
     -------
@@ -327,7 +342,6 @@ def materialize_in_bbox(
         )
         character_ids.append(char_id)
 
-    conn.commit()
     return character_ids
 
 
@@ -432,12 +446,12 @@ def enrich_on_encounter(conn: sqlite3.Connection, character_id: int) -> dict | N
         return None
     from ..llm import get_backend
     from . import rng
-    from .locale import region_for
+    from .locale import profession_de, region_for
 
     world = conn.execute("SELECT tick, world_seed FROM world WHERE id = 1;").fetchone()
     identity = {
         "name": char["name"], "sex": char["sex"], "age": _survivor_age(conn, char["birthdate"]),
-        "profession": char["profession"],
+        "profession": profession_de(char["profession"]),
         "region": region_for(char["lat"], char["lon"]) if char["lat"] is not None else "unknown",
     }
     try:
