@@ -170,17 +170,22 @@ def plan_loot(
     take: dict[str, float] = {}
     left: dict[str, float] = {}
     free = max(0.0, free_kg)
+    # Wasser darf den Rucksack nicht allein füllen: höchstens ein Anteil des freien Platzes
+    water_room = free * constants.LOOT_WATER_MAX_SHARE
     for r in ordered:
         qty, w = r["qty"], r["w"] or 0.0
+        room = min(free, water_room) if r["cat"] == "water" else free
         if w <= 0:
             n = qty
-        elif qty * w <= free + 1e-9:
+        elif qty * w <= room + 1e-9:
             n = qty
         else:
-            n = float(int((free + 1e-9) // w))
+            n = float(int((room + 1e-9) // w))
         if n > 0:
             take[r["item_id"]] = n
             free -= n * w
+            if r["cat"] == "water":
+                water_room -= n * w
         if qty - n > 1e-9:
             left[r["item_id"]] = qty - n
     return take, left

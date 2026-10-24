@@ -235,7 +235,9 @@ def auto_provision(
         # --- Durst: trinken ---
         thirst, drank, tap = char["thirst"], 0.0, 0.0
         steps = 0
-        while thirst < constants.PROVISION_TARGET and steps < _MAX_STEPS:
+        # Erst unter PROVISION_TRIGGER anfangen (sonst wird bei jedem Tick nachgetrunken und
+        # Wasser/Essen über das Kappen bei 1.0 verschwendet), dann bis PROVISION_TARGET.
+        while (thirst < constants.PROVISION_TRIGGER or (steps and thirst < constants.PROVISION_TARGET))                 and steps < _MAX_STEPS:
             steps += 1
             if _available(conn, gid, loc, WATER) >= 1.0 and _consume(conn, gid, loc, WATER, 1.0) >= 1.0:
                 pass  # aus Rucksack/Ort-Vorrat (Ledger-gebucht)
@@ -256,7 +258,7 @@ def auto_provision(
         # --- Hunger: essen (auto-kochen falls nötig) ---
         hunger, ate_kcal = char["hunger"], 0.0
         steps = 0
-        while hunger < constants.PROVISION_TARGET and steps < _MAX_STEPS:
+        while (hunger < constants.PROVISION_TRIGGER or (steps and hunger < constants.PROVISION_TARGET))                 and steps < _MAX_STEPS:
             steps += 1
             food = _best_ready_food(conn, gid, loc)
             if food is None:

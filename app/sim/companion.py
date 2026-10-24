@@ -105,10 +105,13 @@ def compute_opinion(trust: float, char, tr: dict[str, float]) -> str:
     """Haltung zu „bleiben oder gehen“ — rein deterministisch aus Persönlichkeit,
     Bedürfnislage und Vertrauen. Das LLM formuliert sie nur."""
     need = min(char["hunger"], char["thirst"])
-    go = 0.4 * (1.0 - need) + 0.3 * tr["sociability"] + 0.3 * trust
-    stay = 0.5 * tr["caution"] + 0.3 * need + 0.2 * (1.0 - tr["sociability"])
+    wn, ws, wt = constants.COMPANION_GO_WEIGHTS      # Not, Geselligkeit, Vertrauen
+    wc, wne, wso = constants.COMPANION_STAY_WEIGHTS  # Vorsicht, Bedürfnislage, Zurückgezogenheit
+    go = wn * (1.0 - need) + ws * tr["sociability"] + wt * trust
+    stay = wc * tr["caution"] + wne * need + wso * (1.0 - tr["sociability"])
     diff = go - stay
-    return "go" if diff > 0.08 else "stay" if diff < -0.08 else "undecided"
+    m = constants.COMPANION_OPINION_MARGIN
+    return "go" if diff > m else "stay" if diff < -m else "undecided"
 
 
 def _add_trust(conn, delta: float, *, tick: int, reason: str | None = None,

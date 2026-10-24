@@ -38,6 +38,7 @@ CARRY_BODY_FRACTION = 0.30
 CARRY_MIN_KG = 10.0
 CARRY_MAX_KG = 30.0
 CARRY_DEFAULT_BODY_KG = 70.0     # falls weight_kg fehlt
+LOOT_WATER_MAX_SHARE = 0.65      # Wasser belegt beim Plündern höchstens so viel vom freien Platz
 
 # --- Hunger -------------------------------------------------------------
 # Sättigung 0..1 (1 = satt). Ohne Nahrung in ~3 Spieltagen von 1.0 auf 0.
@@ -125,7 +126,7 @@ INFRA_PHASES = (
 
 # --- Geräte & Online (Slice M2 Teil B, Issue #46) ------------------------
 # Akku = Bruchteil 0..1 je Geräteeinheit (kein Ledger-Gut). Verbrauch je Spielstunde.
-DEVICE_DRAIN_ONLINE_PER_H = {"smartphone": 0.10, "laptop": 0.08}   # bei Online-Aktionen
+DEVICE_DRAIN_ONLINE_PER_H = {"smartphone": 0.30, "laptop": 0.24}   # bei Online-Aktionen
 DEVICE_DRAIN_IDLE_PER_H = {"smartphone": 0.004, "laptop": 0.002, "powerbank": 0.0005}
 DEVICE_CHARGE_PER_H = {"smartphone": 0.5, "laptop": 0.35, "powerbank": 0.25}  # am Stromnetz
 DEVICE_START_CHARGE = 0.8        # Startsmartphone
@@ -148,7 +149,7 @@ SEARCH_SURVIVORS_CAP = 0.6
 SEARCH_SURVIVORS_MAX_CONTACTS = 3
 # Downloads: Bandbreite in MB je Minute bei Qualität 1.0; eine Aktion läuft höchstens
 # DOWNLOAD_CHUNK_MINUTES (Teilfortschritt bleibt erhalten).
-DOWNLOAD_MB_PER_MIN = 0.3
+DOWNLOAD_MB_PER_MIN = 2.2
 DOWNLOAD_CHUNK_MINUTES = 120
 
 # --- Capabilities -------------------------------------------------------
@@ -247,12 +248,17 @@ COMPANION_TRUST_MET = 0.05          # Treffen zustande gekommen
 COMPANION_TRUST_TALK = 0.01         # je Gespräch (Tagescap COMPANION_TRUST_TALK_CAP)
 COMPANION_TRUST_TALK_CAP = 0.03
 COMPANION_TRUST_GIVE_HUNGRY = 0.10  # Spieler gibt Essen/Wasser, Companion bedürftig
-COMPANION_TRUST_GIVE = 0.03         # sonstige Gabe
+COMPANION_TRUST_GIVE = 0.05         # sonstige Gabe
 COMPANION_TRUST_SHARED = 0.02       # Companion teilt eigenen Besitz
 COMPANION_TRUST_JOINED_PER_DAY = 0.02
 COMPANION_TRUST_HUNGER_PER_DAY = 0.30   # Verlust pro Tag bei Hunger < COMPANION_HUNGRY
 COMPANION_TRUST_IGNORED_REQUEST = 0.05  # unerfüllte Bitte, Companion in Not
 COMPANION_HUNGRY = 0.35
+# Haltung "gehen/bleiben" (compute_opinion): go = a*(1-Not) + b*Geselligkeit + c*Vertrauen,
+# stay = d*Vorsicht + e*Bedürfnislage + f*(1-Geselligkeit); Differenz > Rand = go/stay.
+COMPANION_GO_WEIGHTS = (0.3, 0.25, 0.45)
+COMPANION_STAY_WEIGHTS = (0.4, 0.25, 0.15)
+COMPANION_OPINION_MARGIN = 0.08
 COMPANION_JOIN_TRUST = 0.45         # ab hier kann er sich anschließen
 COMPANION_FOLLOW_TRUST = 0.30       # ab hier folgt er (vor dem Anschluss)
 COMPANION_LEAVE_TRUST = 0.15        # darunter + Not -> er geht
@@ -288,11 +294,11 @@ END_WEIGHTS_STAY = {"water": 0.20, "food": 0.20, "health": 0.15, "knowledge": 0.
                     "companion": 0.10, "habitability": 0.25}
 END_WEIGHTS_GO = {"water": 0.15, "food": 0.15, "health": 0.15, "knowledge": 0.10,
                   "companion": 0.10, "gear": 0.20, "destination": 0.15}
-END_TARGET_DAYS_STAY = 7.0          # Vorrat für so viele Tage = Wert 1.0
+END_TARGET_DAYS_STAY = 5.0          # Vorrat für so viele Tage = Wert 1.0
 END_TARGET_DAYS_GO = 5.0
-END_WATER_TREATMENT_BONUS_DAYS = 5.0  # Wasseraufbereitung (nur bleiben) streckt den Wasservorrat
+END_WATER_TREATMENT_BONUS_DAYS = 3.0  # Wasseraufbereitung (nur bleiben) streckt den Wasservorrat
 END_THRESHOLD_STAY_SECURE = 0.60
-END_THRESHOLD_GO_HOPEFUL = 0.50
+END_THRESHOLD_GO_HOPEFUL = 0.55
 END_COMPANION_JOINED_BASE = 0.5     # Begleitung: joined = BASE + (1-BASE)*Vertrauen
 END_COMPANION_MET = 0.15
 END_TRANSPORT_VALUE = {"foot": 0.20, "bike": 0.70, "car": 0.95}

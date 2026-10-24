@@ -307,11 +307,15 @@ def evaluate(conn, choice: str, transport: str | None = None,
     gid = _gid(conn)
     persons = _persons(conn)
 
-    water_days = _water_l(conn, gid) / max(0.1, p["daily_water_l"] * persons)
+    # Vorrat in Tagen = Vorrat / tatsächlicher Verbrauch (die Biologie verbraucht je Tag nur
+    # THIRST/HUNGER_LOSS_PER_DAY des Tagesbedarfs; sonst wäre die Bewertung 2-3x strenger).
+    water_days = _water_l(conn, gid) / max(
+        0.1, p["daily_water_l"] * constants.THIRST_LOSS_PER_DAY * persons)
     treat = stay and online.has_knowledge(conn, "water_treatment")
     water_eff = water_days + (constants.END_WATER_TREATMENT_BONUS_DAYS if treat else 0.0)
     water_text = _days_text(water_days, "Wasser") + (" (plus Aufbereitung)" if treat else "")
-    food_days = _food_kcal(conn, gid) / max(1.0, p["daily_kcal"] * persons)
+    food_days = _food_kcal(conn, gid) / max(
+        1.0, p["daily_kcal"] * constants.HUNGER_LOSS_PER_DAY * persons)
 
     health, health_text = _health(conn)
     kv, have = _knowledge_value(

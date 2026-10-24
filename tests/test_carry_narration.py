@@ -26,18 +26,22 @@ def test_loot_respects_capacity_and_priority(world):
     set_char(world, weight_kg=70.0)  # 21 kg
     add_loc_item(world, 100, "water_1l", 45)
     add_loc_item(world, 100, "crowbar", 1)
-    add_loc_item(world, 100, "canned_beans", 10)
+    add_loc_item(world, 100, "canned_beans", 60)
     mark_searched(world, 100)
     r = actions.perform(world, 1, {"kind": "loot", "location_id": 100})
     assert r["ok"]
-    assert r["result"]["transferred"] == {"water_1l": 21.0}
+    # Wasser hat Vorrang, belegt aber höchstens LOOT_WATER_MAX_SHARE des freien Platzes;
+    # der Rest geht an Essen (Rucksack nicht nur voll Wasser).
+    water = float(int(21.0 * constants.LOOT_WATER_MAX_SHARE))
+    beans = float(int((21.0 - water) / 0.4 + 1e-9))
+    assert r["result"]["transferred"] == {"water_1l": water, "canned_beans": beans}
     assert movement.carried_weight(world, 1) <= 21.0 + 1e-9
-    assert r["result"]["left"]["water_1l"] == 24.0
-    assert "canned_beans" in r["result"]["left"]
+    assert r["result"]["left"]["water_1l"] == 45.0 - water
+    assert "crowbar" in r["result"]["left"]
     left = world.execute(
         "SELECT SUM(quantity) q FROM location_inventory WHERE item_id='water_1l';"
     ).fetchone()["q"]
-    assert left == 24.0
+    assert left == 45.0 - water
     assert "Wasser 1L" in r["narration"] and "lässt du zurück" in r["narration"]
     assert audit_clean(world)
 

@@ -325,9 +325,9 @@ def test_download_options_in_action_bar(conn):
 
 
 # --- Knappheit -------------------------------------------------------------------
-def greedy_download(conn, online_budget_min=12 * 60):
-    """Spieler holt pro Tag (Tag 0..4) höchstens 12 h Online-Zeit heraus (der Rest ist
-    Schlafen, Essen, Plündern), nutzt Stromnetz und Powerbank zum Laden und nimmt
+def greedy_download(conn, online_budget_min=6 * 60):
+    """Spieler holt pro Tag (Tag 0..4) höchstens 6 h Online-Zeit heraus (der Rest ist
+    Schlafen, Essen, Plündern; Downloads sind schnell, #49-Balancing), nutzt Stromnetz und Powerbank zum Laden und nimmt
     die kleinsten Pakete zuerst."""
     order = sorted(online.packages(), key=lambda p: p["size_mb"])
     for day in range(0, 5):

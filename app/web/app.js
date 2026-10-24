@@ -1052,7 +1052,7 @@ function fillEnding(e, fallbackTitle, fallbackText) {
   if (st.km_walked != null) items.push(`Strecke: ${(+st.km_walked).toFixed(1)} km`);
   if (st.freetext != null) items.push(`Freitext-Ablehnungen: ${st.freetext_rejected ?? 0}/${st.freetext}`);
   items.push(`Pakete: ${(st.packages || []).length}`);
-  items.push(`Begleiter: ${{ joined: "dabei", none: "keiner" }[st.companion] || st.companion || "keiner"}`);
+  items.push(`Begleiter: ${st.companion && st.companion !== "none" ? (STAGE_DE[st.companion] || st.companion) : "keiner"}`);
   for (const t of items) { const d = document.createElement("span"); d.textContent = t; stats.appendChild(d); }
 }
 
