@@ -366,9 +366,13 @@ class TestReadTools:
         names = {s["name"] for s in specs}
         assert {f"propose_{op}" for op in EFFECT_OPS} <= names and "finish" in names
         for s in specs:
+            # alle Schemas strict-tauglich; das Flag selbst nur für Vorschläge +
+            # finish (API-Limit von 20 strikten Werkzeugen, siehe test_tool_limits)
             sch = s["input_schema"]
-            assert s["strict"] is True and sch["additionalProperties"] is False
+            assert sch["additionalProperties"] is False
             assert set(sch["required"]) == set(sch["properties"])
+            if s["name"].startswith("propose_") or s["name"] == "finish":
+                assert s["strict"] is True
 
 
 # --- Erweitertes Vokabular --------------------------------------------------

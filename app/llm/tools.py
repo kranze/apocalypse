@@ -142,24 +142,39 @@ def op_of(tool_name: str) -> str | None:
     return None
 
 
+# Die API erlaubt höchstens so viele Werkzeuge mit ``strict: true`` je Request.
+MAX_STRICT_TOOLS = 20
+
+
 def tool_specs(*, strict: bool = True) -> list[dict[str, Any]]:
     """Alle Werkzeuge im Anthropic-Tool-Format, in stabiler Reihenfolge
-    (wichtig fürs Prompt-Caching)."""
-    out: list[dict[str, Any]] = []
+    (wichtig fürs Prompt-Caching).
 
-    def add(name: str, desc: str, schema: dict[str, Any]) -> None:
+    ``strict`` gilt nur für Vorschläge und ``finish`` — deren Eingaben verarbeitet
+    der Sim-Kern weiter. Lese-Werkzeuge bleiben locker (die Toolbox prüft ihre
+    Argumente selbst); so bleibt die Zahl strikter Werkzeuge unter dem API-Limit."""
+    out: list[dict[str, Any]] = []
+    n_strict = 0
+
+    def add(name: str, desc: str, schema: dict[str, Any], *, want_strict: bool) -> None:
+        nonlocal n_strict
         spec: dict[str, Any] = {"name": name, "description": desc, "input_schema": schema}
-        if strict:
+        if strict and want_strict and n_strict < MAX_STRICT_TOOLS:
             spec["strict"] = True
+            n_strict += 1
         out.append(spec)
 
     for name, d in READ_TOOLS.items():
-        add(name, d["description"], d["input_schema"])
-    for op in EFFECT_OPS:
-        if op in _PROPOSE_SPECS:
-            desc, schema = _PROPOSE_SPECS[op]
-            add(propose_name(op), "Vorschlag: " + desc, schema)
-    add(FINISH_TOOL, _FINISH_SPEC["description"], _FINISH_SPEC["input_schema"])
+        add(name, d["description"], d["input_schema"], want_strict=False)
+    # finish zuerst als strikt reservieren, damit es nie am Limit scheitert
+    proposals = [(op, _PROPOSE_SPECS[op]) for op in EFFECT_OPS if op in _PROPOSE_SPECS]
+    if strict and len(proposals) + 1 > MAX_STRICT_TOOLS:
+        proposals_strict = MAX_STRICT_TOOLS - 1
+    else:
+        proposals_strict = len(proposals)
+    for i, (op, (desc, schema)) in enumerate(proposals):
+        add(propose_name(op), "Vorschlag: " + desc, schema, want_strict=i < proposals_strict)
+    add(FINISH_TOOL, _FINISH_SPEC["description"], _FINISH_SPEC["input_schema"], want_strict=True)
     return out
 
 
