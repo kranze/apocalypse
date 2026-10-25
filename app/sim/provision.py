@@ -52,7 +52,7 @@ def group_location(conn, group_id) -> int | None:
     return _current_location(conn, ch["lat"], ch["lon"]) if ch else None
 
 
-def _tap_available(conn, loc_id) -> bool:  # loc_id: Infra-Ort (auch HOME_LOC_ID)
+def _tap_available(conn, loc_id) -> bool:  # loc_id: Infra-Ort 
     """Leitungswasser nur, solange am Ort der Wasserdruck über der Schwelle liegt.
     Vorher gab es keine implizite Wasserquelle (Wasser kam nur aus Items)."""
     if loc_id is None:

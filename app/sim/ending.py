@@ -18,7 +18,7 @@ from typing import Any
 
 from ..llm import get_backend
 from ..llm.stub import RuleBackend
-from . import companion, constants, decay_world, effects, generation, online
+from . import companion, constants, declare, decay_world, effects, generation, online
 from .events import DECISION, emit_event
 
 PLAYER_ID = 1
@@ -108,6 +108,8 @@ def stats(conn) -> dict[str, Any]:
         "km_walked": round((r["meters_walked"] if r else 0.0) / 1000.0, 1),
         "packages": [p["id"] for p in online.packages() if online.has_knowledge(conn, p["id"])],
         "companion": comp["stage"] if comp else "none",
+        # Spielerwissen (Issue #54): was der Spieler selbst eingebracht hat (transparent)
+        "declared": declare.list_declared(conn),
     }
 
 

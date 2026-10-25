@@ -86,10 +86,10 @@ def _offset(dist_m: float, angle: float) -> tuple[float, float]:
 
 
 def layout(seed: int) -> list[dict[str, Any]]:
-    """Synthetisches Viertel: Zuhause, 10 Häuser, 2 Supermärkte, Tankstelle,
+    """Synthetisches Viertel (ohne Zuhause, das new_game anlegt): 10 Häuser, 2 Supermärkte, Tankstelle,
     Apotheke, Baumarkt in 100 m bis 1,5 km Entfernung (deterministisch je Seed)."""
     r = random.Random(seed * 7919 + 13)
-    spec: list[tuple[str, str, float, float, float]] = [("house", "Zuhause", 0.0, 0.0, 120.0)]
+    spec: list[tuple[str, str, float, float, float]] = []  # Zuhause legt new_game selbst an (Typ home)
     for i in range(10):
         spec.append(("house", f"Haus {i + 1}", r.uniform(100, 1500), r.uniform(0, 2 * math.pi),
                      r.uniform(80, 220)))
@@ -101,10 +101,10 @@ def layout(seed: int) -> list[dict[str, Any]]:
         ("hardware", "Baumarkt", r.uniform(700, 1500), r.uniform(0, 2 * math.pi), 400.0),
     ]
     out = []
-    for i, (typ, name, d, a, fp) in enumerate(spec, start=1):
+    for i, (typ, name, d, a, fp) in enumerate(spec, start=1):  # ids ab 2: id 1 ist die Wohnung
         lat, lon = _offset(d, a)
-        out.append({"id": i, "type": typ, "name": name, "lat": lat, "lon": lon,
-                    "footprint": fp, "gen_seed": 1000 * seed + i})
+        out.append({"id": i + 1, "type": typ, "name": name, "lat": lat, "lon": lon,
+                    "footprint": fp, "gen_seed": 1000 * seed + i + 1})
     return out
 
 

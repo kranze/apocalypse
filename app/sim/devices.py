@@ -22,8 +22,11 @@ import math
 import sqlite3
 from typing import Any
 
-from . import constants, decay_world
+from . import constants, decay_world, energy
 
+SOURCE_TEXT = {"grid": "am Stromnetz", "storage": "aus dem Energiespeicher",
+               "powerbank": "aus der Powerbank"}
+SOURCE_LABEL = {"grid": "Stromnetz", "storage": "Speicher", "powerbank": "Powerbank"}
 ONLINE_DEVICES = ("smartphone", "laptop")      # nutzbar für Online-Aktionen
 DEVICES = ("smartphone", "laptop", "powerbank")
 
@@ -219,6 +222,44 @@ def grid_charge_plan(conn, gid: int, location_id: int | None) -> dict[str, Any] 
     return {"minutes": minutes, "gains": gains, "source": "grid"}
 
 
+def storage_charge_plan(conn, gid: int, location_id: int | None) -> dict[str, Any] | None:
+    """Laden aus einem Energiespeicher (Hausakku/Powerstation, siehe ``energy``): am
+    Ort oder getragen, mit endlichem kWh-Vorrat. Dauer wie am Netz; reicht der Vorrat
+    nicht für alle Geräte, werden die Gewinne anteilig gekürzt. Liefert
+    {minutes, gains, kwh_cost{item: kWh}, source: "storage"} oder None."""
+    stores = energy.storages_at(conn, gid, location_id)
+    if not stores:
+        return None
+    need = {i: v for i, v in _deficits(conn, gid).items() if v["deficit"] > 0.02}
+    if not need:
+        return None
+    hours = max(
+        v["deficit"] / v["units"] / constants.DEVICE_CHARGE_PER_H[i] for i, v in need.items())
+    minutes = int(min(constants.CHARGE_MAX_MINUTES,
+                      max(constants.CHARGE_MIN_MINUTES, math.ceil(hours * 60.0))))
+    gains = {
+        i: min(v["deficit"], constants.DEVICE_CHARGE_PER_H[i] * minutes / 60.0 * v["units"])
+        for i, v in need.items()
+    }
+    kwh = {i: g * constants.KWH_PER_DEVICE_CHARGE[i] for i, g in gains.items()}
+    wanted = sum(kwh.values())
+    avail = sum(s["charge_kwh"] for s in stores)
+    if avail < constants.STORAGE_MIN_KWH:
+        return None
+    if wanted > avail:  # Vorrat reicht nicht ganz: alles anteilig
+        scale = avail / wanted
+        gains = {i: g * scale for i, g in gains.items()}
+        wanted = avail
+    cost: dict[str, float] = {}
+    left = wanted
+    for s in stores:  # erst die Speicher am Ort, dann getragene
+        take = min(s["charge_kwh"], left)
+        if take > 1e-12:
+            cost[s["item_id"]] = take
+            left -= take
+    return {"minutes": minutes, "gains": gains, "kwh_cost": cost, "source": "storage"}
+
+
 def powerbank_charge_plan(conn, gid: int) -> dict[str, Any] | None:
     """Laden aus der Powerbank (überall): Ladung wandert vom Akku der Powerbank
     (``POWERBANK_CAPACITY_PHONES`` Smartphone-Ladungen je volle Einheit) in
@@ -247,11 +288,14 @@ def powerbank_charge_plan(conn, gid: int) -> dict[str, Any] | None:
 def charge_plan(conn, gid: int, location_id: int | None,
                 source: str | None = None) -> dict[str, Any] | None:
     """Gemeinsame Ladeplan-Wahl (Aktion ``charge`` UND Effekt ``charge_device``):
-    erst Stromnetz (nur bei lokalem Strom > CHARGE_POWER_MIN), dann Powerbank.
-    ``source`` = "grid" | "powerbank" | None (beides erlaubt)."""
+    erst Stromnetz (nur bei lokalem Strom > CHARGE_POWER_MIN), dann Energiespeicher
+    (deklarierter Hausakku o.ä., kWh-endlich), dann Powerbank.
+    ``source`` = "grid" | "storage" | "powerbank" | None (alles erlaubt)."""
     plan = None
     if source in (None, "grid"):
         plan = grid_charge_plan(conn, gid, location_id)
+    if plan is None and source in (None, "storage"):
+        plan = storage_charge_plan(conn, gid, location_id)
     if plan is None and source in (None, "powerbank"):
         plan = powerbank_charge_plan(conn, gid)
     return plan
@@ -277,6 +321,8 @@ def apply_charge(conn, gid: int, plan: dict[str, Any], minutes: int | None = Non
                 "UPDATE device_state SET charge = MIN(units, charge + ?), updated_tick = ? "
                 "WHERE group_id = ? AND item_id = ?;", (g, now, gid, item))
             done[item] = round(g, 4)
+        for item, kwh in (plan.get("kwh_cost") or {}).items():
+            energy.draw(conn, item, kwh * frac)
         if plan.get("pb_cost"):
             conn.execute(
                 "UPDATE device_state SET charge = MAX(0.0, charge - ?) "

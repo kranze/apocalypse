@@ -13,7 +13,10 @@ from datetime import datetime
 from typing import Any
 
 from ..osm import geocode
-from . import biology, chatlog, companion, constants, devices, ending, ledger, online, survivors
+from . import (
+    biology, chatlog, companion, constants, declare, devices, ending, home, ledger, online,
+    survivors,
+)
 
 INTRO = (
     "Du wachst auf. Es ist still — vollkommen still.\n"
@@ -63,6 +66,7 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
         "UPDATE world SET tick = 0, survivor_sim_day = 0 WHERE id = 1;",
     ):
         conn.execute(stmt)
+    declare.reset(conn)  # Spielerwissen der alten Welt (Protokoll, Speicher, Katalog/KB-Einträge)
     conn.commit()
 
     # 3) Globale Überlebenden-Verteilung aufsetzen (schnell, kein Netz).
@@ -102,14 +106,31 @@ def new_game(conn: sqlite3.Connection, profile: dict[str, Any]) -> dict[str, Any
         ledger.add(conn, "smartphone", 1)
         devices.grant(conn, 1, "smartphone", constants.DEVICE_START_CHARGE)
 
+    # 4c) Das Zuhause als echter Ort (Typ ``home``, „Deine Wohnung“; Issue #54).
+    with conn:
+        home.ensure_home(conn, lat, lon)
+
+    # 4d) Spielerwissen aus dem Onboarding: EIN Batch-Aufruf, jeder Vorschlag wird einzeln
+    #     geprüft/geklemmt (kontrollierte Ausnahme vom Eisernen Prinzip, Quelle
+    #     ``player_declared``). Das Ergebnis je Gegenstand steht in der Intro-Erzählung.
+    declared = declare.declare_batch(
+        conn, profile.get("home_inventory") or "",
+        {"lat": lat, "lon": lon},
+        {"profession": profile.get("profession"), "hobbies": profile.get("hobbies")})
+    intro = INTRO
+    extra = declare.intro_text(declared)
+    if extra:
+        intro = INTRO + "\n\n" + extra
+
     # 5) Chat-Log zurücksetzen und Intro als erste Narrator-Zeile schreiben.
     chatlog.clear(conn, 1)
-    chatlog.append(conn, 1, "narrator", INTRO)
+    chatlog.append(conn, 1, "narrator", intro)
     conn.commit()
 
     # Heimat-Gebäude wird sichtbar, sobald der Heimat-Chunk im Hintergrund geladen wird.
     return {
         "ok": True,
-        "intro": INTRO,
+        "intro": intro,
         "home": [lat, lon],
+        "declared": declared,
     }

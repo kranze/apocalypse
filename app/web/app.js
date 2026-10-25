@@ -28,6 +28,7 @@ const TYPE_COLORS = {
   hardware: "#b07a4a",
   pharmacy: "#d9534f",
   hospital: "#d973b5",
+  home: "#e0c35a",
 };
 const PLAYER_ID = 1;
 const PLAYER_GROUP = 1;
@@ -1313,6 +1314,10 @@ function fillEnding(e, fallbackTitle, fallbackText) {
   if (st.km_walked != null) items.push(`Strecke: ${(+st.km_walked).toFixed(1)} km`);
   if (st.freetext != null) items.push(`Freitext-Ablehnungen: ${st.freetext_rejected ?? 0}/${st.freetext}`);
   items.push(`Pakete: ${(st.packages || []).length}`);
+  if ((st.declared || []).length) {
+    const d = st.declared.map((x) => `${x.quantity > 1 ? x.quantity + "x " : ""}${x.name}${x.status === "pending" ? " (ohne Ort)" : ""}`);
+    items.push(`Selbst eingebracht: ${d.join(", ")}`);
+  }
   items.push(`Begleiter: ${st.companion && st.companion !== "none" ? (STAGE_DE[st.companion] || st.companion) : "keiner"}`);
   for (const t of items) { const d = document.createElement("span"); d.textContent = t; stats.appendChild(d); }
 }
@@ -1494,6 +1499,7 @@ async function submitOnboarding() {
     family: v("f-family"), education: v("f-education"),
     profession: v("f-profession"), hobbies: v("f-hobbies"),
     self_description: v("f-desc"), address: v("f-address"),
+    home_inventory: v("f-home") || null,
     lat: num("f-lat"), lon: num("f-lon"),
   };
   const errEl = document.getElementById("onboard-error");

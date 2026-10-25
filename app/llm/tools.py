@@ -105,12 +105,28 @@ _PROPOSE_SPECS: dict[str, tuple[str, dict[str, Any]]] = {
     "barricade": ("Den Ort, an dem man steht, verbarrikadieren (braucht Material "
                   "laut KB-Rezept).", _obj({"target": _NS})),
     "charge_device": ("Smartphone/Laptop laden (Stromnetz nur bei Strom am Ort, "
-                      "sonst Powerbank). source: 'grid', 'powerbank' oder null = "
+                      "sonst Speicher/Powerbank). source: 'grid', 'storage', 'powerbank' oder null = "
                       "was gerade geht.", _obj({"source": _NS})),
     "drink": ("Einen Liter Wasser trinken (Inventar, sonst Leitungswasser — nur "
               "solange am Ort Wasserdruck herrscht).", _obj({})),
     "leave_note": ("Eine kurze Nachricht/einen Zettel am aktuellen Ort hinterlassen.",
                    _obj({"text": _S})),
+    "declare_item": ("Spielerwissen: der Spieler sagt, was in SEINER Wohnung oder bei "
+                     "Nachbarn steht (z.B. ein 100-kWh-Akku im Keller). Beurteile die "
+                     "Plausibilität (plausible=false + reason bei Absurdem wie einem A380 "
+                     "im Keller) und liefere realistische Eigenschaften: Gewicht je Stück, "
+                     "Menge, provides/requires nur aus heat|power|transmitter, bei "
+                     "Energiespeichern capacity_kwh/charge_kwh. where='neighbour', wenn der "
+                     "Gegenstand bei einem Nachbarn steht, sonst 'here'. Der Kern klemmt "
+                     "alles und prüft den Ort.",
+                     _obj({"name": _S, "category": {"type": "string", "enum": [
+                               "food", "water", "tool", "material", "fuel", "medical", "misc"]},
+                           "weight_kg": _NN, "quantity": _NN,
+                           "provides": {"type": ["array", "null"], "items": _S},
+                           "requires": {"type": ["array", "null"], "items": _S},
+                           "capacity_kwh": _NN, "charge_kwh": _NN,
+                           "plausible": {"type": "boolean"}, "reason": _S,
+                           "where": {"type": "string", "enum": ["here", "neighbour"]}})),
 }
 
 FINISH_TOOL = "finish"

@@ -60,7 +60,6 @@ THIRST_ACTIVITY_PER_KM = 0.02
 # Unter ...TRIGGER wird automatisch versorgt, bis ...TARGET erreicht (falls Vorrat).
 PROVISION_TRIGGER = 0.7
 PROVISION_TARGET = 0.9
-HOME_RADIUS_M = 40.0               # "zu Hause": Hahn/Steckdose des Heimat-Ankers (kein locations-Eintrag)
 PROVISION_SOURCE_RADIUS_M = 30.0   # "Umgebung" = entdeckter Ort in Reichweite
 # Schlaf: müder Charakter ruht automatisch (Schlaf/Tag Erholung beim Ruhen).
 SLEEP_RECOVERY_PER_DAY = 2.0
@@ -317,3 +316,27 @@ END_KNOWLEDGE_GO = {"offline_maps": 1.0, "bike_repair": 0.7, "car_fuel": 0.7, "f
                     "radio_basics": 0.5, "wild_plants": 0.4, "solar_batteries": 0.3,
                     "water_treatment": 0.5}
 EPILOGUE_MAX_CHARS = 3000
+
+# --- Spielerwissen: deklarierte Gegenstände (Issue #54) -----------------------
+# Kontrollierte Ausnahme vom Eisernen Prinzip: der Spieler darf plausible Dinge in
+# der eigenen Wohnung / bei Nachbarn deklarieren (Ledger-Quelle ``player_declared``).
+# Das LLM urteilt über die Plausibilität, der Sim-Kern klemmt hart.
+DECLARE_RADIUS_M = 250.0            # Nachbarn: Gebäude bis hierher um das Zuhause
+DECLARE_HERE_REACH_M = 40.0         # "hier" = Gebäude in dieser Reichweite des Spielers
+DECLARE_CATEGORIES = ("food", "water", "tool", "material", "fuel", "medical", "misc")
+DECLARE_MAX_UNIT_WEIGHT_KG = 1000.0  # Klemme je Stück (Hausakkus wiegen)
+DECLARE_REJECT_UNIT_WEIGHT_KG = 5000.0  # darüber unplausibel (A380, Panzer) -> abgelehnt
+DECLARE_MAX_QTY = 50                # Höchstmenge je Deklaration
+DECLARE_MAX_TOTAL_KG = 2000.0       # Gesamtgewicht je Deklaration (reduziert die Menge)
+DECLARE_MAX_CAPACITY_KWH = 250.0    # Deckel für Energiespeicher
+DECLARE_DEFAULT_CHARGE_FRAC = 0.8   # Ladestand, wenn der Vorschlag keinen nennt
+DECLARE_MAX_ITEMS = 30              # Deklarationen insgesamt je Spiel
+DECLARE_MAX_BATCH = 12              # Vorschläge je Onboarding-Batch
+DECLARE_NAME_MAX = 60
+DECLARE_REASON_MAX = 160
+DECLARE_KCAL_PER_KG = 1500.0        # Nahrung ohne Angabe: Kalorien je kg (Konserven-Mittel)
+# Energiespeicher als Stromquelle: Umrechnung kWh -> Geräteladungen (1.0 = voll geladenes
+# Gerät, wie in devices) und Entnahme je Rezept/Aktion mit ``power``-Anforderung.
+KWH_PER_DEVICE_CHARGE = {"smartphone": 0.015, "laptop": 0.06, "powerbank": 0.02}
+STORAGE_RECIPE_KWH = 0.5            # kWh je Rezept/Capability, das ``power`` braucht
+STORAGE_MIN_KWH = 0.01              # darunter gilt ein Speicher als leer

@@ -167,9 +167,15 @@ class TestIronPrinciple:
 
 
 class TestNoLLMItemInvention:
-    """Issue #50: Kein LLM-Pfad darf neue Items/Mengen erzeugen."""
+    """Issue #50/#54: Kein LLM-Pfad darf neue Items/Mengen erzeugen — mit EINER
+    kontrollierten Ausnahme: Spielerwissen (``declare_item``). Dort schlägt das LLM
+    nur vor; angelegt wird ausschließlich über den validierten Sim-Kern-Pfad
+    ``declare.check`` -> ``declare.apply`` (Ledger-Quelle ``player_declared``).
+    Die Suche erfindet weiterhin nichts."""
 
     EFFECTS = ROOT / "app" / "sim" / "effects.py"
+    DECLARE = ROOT / "app" / "sim" / "declare.py"
+    APP = ROOT / "app"
 
     def test_effects_cannot_write_item_catalog(self):
         src = self.EFFECTS.read_text(encoding="utf-8")
@@ -178,11 +184,53 @@ class TestNoLLMItemInvention:
         )
         assert "_materialize_item" not in src
 
-    def test_llm_contract_has_no_item_invention(self):
+    def test_item_creation_only_in_declare_module(self):
+        """Katalog-Einträge neben dem Seed (db.py) entstehen nur in declare.py, und die
+        Ledger-Quelle ``player_declared`` wird nur dort gebucht."""
+        import re
+        offenders = []
+        for p in self.APP.rglob("*.py"):
+            if p.name in ("db.py", "declare.py"):
+                continue
+            src = p.read_text(encoding="utf-8")
+            if re.search(r"(INSERT|UPDATE|DELETE)[^;\"]*item_catalog", src, re.I):
+                offenders.append(f"{p.name}: schreibt item_catalog")
+            if "source=" in src and "ledger.add" in src and p.name != "ledger.py":
+                offenders.append(f"{p.name}: bucht eine benannte Ledger-Quelle")
+        assert not offenders, "; ".join(offenders)
+
+    def test_llm_contract_item_stats_only_via_declare(self):
+        """Item-Stammdaten (``weight_kg`` ...) darf nur der deklarierte Vorschlagsvertrag
+        tragen (``declare_item`` / ``declare_items``); sonst bleibt der LLM-Vertrag frei
+        von Item-Erfindung."""
         for p in LLM_DIR.glob("*.py"):
             src = p.read_text(encoding="utf-8")
             assert "search_item" not in src, f"{p.name}: alter Erfinde-Vertrag"
-            assert "weight_kg" not in src, f"{p.name}: LLM darf keine Item-Stammdaten liefern"
+            if "weight_kg" in src:
+                assert "declare_item" in src, (
+                    f"{p.name}: weight_kg nur im declare_item-Vertrag erlaubt")
+
+    def test_declare_effect_goes_through_validation(self):
+        """``_a_declare_item`` prüft per ``declare.check`` vor ``declare.apply``; der
+        Validator nutzt dieselbe Prüfung. Das ist der einzige Item-Anlege-Pfad."""
+        tree = ast.parse(self.EFFECTS.read_text(encoding="utf-8"))
+        funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+
+        def calls(fn):
+            return [ast.unparse(n.func) for n in ast.walk(fn) if isinstance(n, ast.Call)]
+
+        applier = calls(funcs["_a_declare_item"])
+        assert "declare.check" in applier and "declare.apply" in applier
+        assert applier.index("declare.check") < applier.index("declare.apply")
+        assert "declare.check" in calls(funcs["_v_declare_item"])
+        # kein anderer Applier legt Items über declare an
+        for name, fn in funcs.items():
+            if name.startswith("_a_") and name != "_a_declare_item":
+                assert "declare.apply" not in calls(fn), name
+
+    def test_declared_items_are_ledger_booked_as_player_declared(self):
+        src = self.DECLARE.read_text(encoding="utf-8")
+        assert "ledger.add(conn, item_id, c[\"quantity\"], source=SOURCE)" in src
 
     def test_search_only_matches_candidates(self):
         """_a_search filtert die Backend-Antwort gegen die Kandidatenliste."""

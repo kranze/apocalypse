@@ -21,6 +21,7 @@ from .sim import (
     actions as actions_mod, adjudicator, companion as companion_mod, ending as ending_mod, online, chatlog, constants, game, generation, kb, looting, movement, resources, tick,
 )
 from .sim import chunks as chunks_mod
+from .sim import declare as declare_mod
 from .sim import survivor_sim, survivors as survivors_mod
 from .sim.identity import generate_identity
 from .sim.locale import profession_de, region_for
@@ -110,6 +111,7 @@ class NewGameRequest(BaseModel):
     address: str | None = None
     lat: float | None = None          # manueller Fallback
     lon: float | None = None
+    home_inventory: str | None = None  # Spielerwissen: Was gibt es zu Hause / bei Nachbarn?
 
 
 class LootRequest(BaseModel):
@@ -186,6 +188,8 @@ def ensure_chunks(req: EnsureChunksRequest) -> dict:
                 req.max_lat,
                 req.max_lon,
             )
+            # Nachbar-Gegenstände aus dem Onboarding, die auf geladene Gebäude warteten.
+            declare_mod.resolve_pending(conn)
             conn.commit()
         finally:
             conn.close()

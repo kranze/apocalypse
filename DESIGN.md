@@ -103,6 +103,12 @@ Senken: Verbrauch, Verderb, Verlust.
   Gutschrift zusammen oder gar nicht).
 - **Bilanz-Prüfung** nach jedem Tick als Sicherheitsnetz gegen Erzeugung aus
   dem Nichts.
+- **Spielerwissen als Quelle:** Was der Spieler über sein echtes Zuhause und
+  seine Nachbarn weiß, darf er einbringen (Werkzeug, Hausakku, Vorräte). Das LLM
+  prüft nur die Plausibilität, der Sim-Kern klemmt Eigenschaften und bucht die
+  Gegenstände als Quelle `player_declared`. Das ist bewusst Vertrauen in den
+  Spieler: Wer hier schummelt, betrügt nur sich selbst. Der Endbildschirm
+  listet alles, was selbst eingebracht wurde.
 
 ---
 

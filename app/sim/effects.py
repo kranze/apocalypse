@@ -32,6 +32,7 @@ from ..llm import get_backend
 from . import (
     capabilities,
     constants,
+    declare,
     decay_world,
     devices,
     generation,
@@ -49,6 +50,7 @@ OPS = (
     "move_to", "discover", "transfer", "consume_food", "prepare", "search",
     "advance_time", "transform", "establish_capability", "narrate",
     "fill_water", "barricade", "leave_note", "charge_device", "drink",
+    "declare_item",
 )
 
 _FILL_MAX_L = 10.0       # so viel Wasser füllt man in einem Zug höchstens ab
@@ -59,7 +61,7 @@ _SEARCH_REACH_M = 40.0  # man durchsucht den Ort, an dem man steht
 _M_PER_DEG_LAT = 111_320.0
 _LOCATION_TYPES = {
     "house", "building", "supermarket", "fuel_station", "hardware",
-    "pharmacy", "hospital",
+    "pharmacy", "hospital", "home",
 }
 _REACH_M = 400.0  # Nähe für discover/transfer
 
@@ -140,6 +142,8 @@ class Staged:
     def __init__(self) -> None:
         self.delta: dict[str, float] = {}
         self.loc_taken: dict[tuple[int, str], float] = {}
+        self.kwh_used: dict[str, float] = {}  # vorgemerkte Entnahmen aus Energiespeichern
+        self.declared = 0                     # in diesem Plan vorgemerkte Deklarationen
 
     def owned(self, conn, gid, item_id) -> float:
         return max(0.0, _owned(conn, gid, item_id) + self.delta.get(item_id, 0.0))
@@ -149,6 +153,11 @@ class Staged:
 
     def take(self, item_id: str, qty: float) -> None:
         self.add(item_id, -qty)
+
+    def use_kwh(self, src: dict | None) -> None:
+        """Merkt die Energie-Entnahme eines ``requirements.satisfy``-Ergebnisses vor."""
+        if src and src.get("kwh"):
+            self.kwh_used[src["item"]] = self.kwh_used.get(src["item"], 0.0) + src["kwh"]
 
 
 def _power_loc(conn, ctx) -> int | None:
@@ -170,7 +179,7 @@ def _satisfy(conn, gid, req, st: Staged, extra: dict[str, float] | None = None,
     loc_id = _power_loc(conn, ctx) if (ctx is not None and req == "power") else None
     return requirements.satisfy(
         conn, gid, req, owned_fn=lambda i: st.owned(conn, gid, i) - ex.get(i, 0.0),
-        location_id=loc_id,
+        location_id=loc_id, kwh_used=st.kwh_used,
     )
 
 
@@ -313,10 +322,12 @@ def _v_transform(conn, char, eff, ctx, st):
         if st.owned(conn, gid, item) < q:
             return (False, f"missing:{item}")
     used = dict(need)
+    srcs = []
     for req in eff.get("requires", []):
         src = _satisfy(conn, gid, req, st, used, ctx)
         if src is None:
             return (False, f"missing:{req}")
+        srcs.append(src)
         if src["consume"] > 0:
             used[src["item"]] = used.get(src["item"], 0.0) + src["consume"]
     produce = eff.get("produce") or []
@@ -332,6 +343,8 @@ def _v_transform(conn, char, eff, ctx, st):
         return (False, "produce_exceeds_input")
     for item, q in used.items():
         st.take(item, q)
+    for src in srcs:
+        st.use_kwh(src)
     for p in produce:
         st.add(p["item"], float(p.get("qty", 1)))
     return (True, None)
@@ -344,14 +357,18 @@ def _v_establish(conn, char, eff, ctx, st):
     if recipe is None or not isinstance(recipe["value"], dict):
         return (False, "no_recipe")  # z.B. "Mobilfunknetz" -> kein Rezept
     used: dict[str, float] = {}
+    srcs = []
     for req in recipe["value"].get("requires", []):
         src = _satisfy(conn, gid, req, st, used, ctx)
         if src is None:
             return (False, f"missing:{req}")
+        srcs.append(src)
         if src["consume"] > 0:
             used[src["item"]] = used.get(src["item"], 0.0) + src["consume"]
     for item, q in used.items():
         st.take(item, q)
+    for src in srcs:
+        st.use_kwh(src)
     return (True, None)
 
 
@@ -425,10 +442,25 @@ def _v_charge_device(conn, char, eff, ctx, st):
     if not devices.peek(conn, gid):
         return (False, "no_device")
     source = eff.get("source")
-    if source not in (None, "grid", "powerbank"):
+    if source not in (None, "grid", "storage", "powerbank"):
         return (False, "bad_params:charge_device")
     if devices.charge_plan(conn, gid, _power_loc(conn, ctx), source) is None:
         return (False, devices.charge_block_reason(conn, gid))
+    return (True, None)
+
+
+def _v_declare_item(conn, char, eff, ctx, st):
+    """Spielerwissen (Issue #54): plausible Gegenstände in der Wohnung/bei Nachbarn.
+    Das LLM urteilt (``plausible`` + Grund) und liefert Eigenschaften; hier wird
+    geklemmt, der Ort geprüft (``declare_not_here``) und das Gesamtlimit gehalten.
+    Gestaged wird nur die Zahl der Deklarationen — die Gegenstände selbst stehen erst
+    nach dem Anwenden im Inventar (ledger-gebucht, Quelle ``player_declared``)."""
+    ok, reason, c, loc = declare.check(conn, eff, ctx["player"])
+    if not ok:
+        return (False, reason)
+    if declare.declared_count(conn) + st.declared >= constants.DECLARE_MAX_ITEMS:
+        return (False, "declare_limit")
+    st.declared += 1
     return (True, None)
 
 
@@ -502,10 +534,12 @@ def _a_transform(conn, char, eff, ctx):
             resources._consume_from_group(conn, gid, c["item"], float(c.get("qty", 1)))
             ledger_add(conn, c["item"], -float(c.get("qty", 1)))
         for req in eff.get("requires", []):
-            src = requirements.satisfy(conn, gid, req)
+            src = requirements.satisfy(
+                conn, gid, req, location_id=_power_loc(conn, ctx) if req == "power" else None)
             if src and src["consume"] > 0:
                 resources._consume_from_group(conn, gid, src["item"], src["consume"])
                 ledger_add(conn, src["item"], -src["consume"])
+            requirements.draw(conn, src)  # Energiespeicher: kWh entnehmen
         for p in eff.get("produce", []):
             _produce(conn, gid, p["item"], float(p.get("qty", 1)), now)
             ledger_add(conn, p["item"], float(p.get("qty", 1)))
@@ -523,10 +557,12 @@ def _a_establish(conn, char, eff, ctx):
         params.setdefault("range_km", recipe["range_km"])
     with conn:
         for req in recipe.get("requires", []):
-            src = requirements.satisfy(conn, gid, req)
+            src = requirements.satisfy(
+                conn, gid, req, location_id=_power_loc(conn, ctx) if req == "power" else None)
             if src and src["consume"] > 0:
                 resources._consume_from_group(conn, gid, src["item"], src["consume"])
                 ledger_add(conn, src["item"], -src["consume"])
+            requirements.draw(conn, src)  # Energiespeicher: kWh entnehmen
         cap_id = capabilities.create(
             conn, ctype, gid,
             location_id=(loc["id"] if loc else None),
@@ -605,10 +641,20 @@ def _a_charge_device(conn, char, eff, ctx):
     adv = _a_advance_time(conn, char, {"minutes": plan["minutes"]}, ctx)
     done = devices.apply_charge(conn, gid, plan, adv["minutes"])
     devices.sync(conn, gid)
-    src = "am Stromnetz" if plan["source"] == "grid" else "aus der Powerbank"
+    src = devices.SOURCE_TEXT[plan["source"]]
     return {"ok": True, "source": plan["source"], "charged": done,
             "minutes": adv["minutes"], "interrupts": adv["interrupts"],
             "narration": f"Du lädst deine Geräte {src}."}
+
+
+def _a_declare_item(conn, char, eff, ctx):
+    """Legt den geprüften Gegenstand über ``declare.apply`` an (Quelle
+    ``player_declared``); die Erzählung nennt den Standort."""
+    ok, reason, c, loc = declare.check(conn, eff, ctx["player"])
+    if not ok:
+        return {"ok": False, "reason": reason}
+    return declare.apply(conn, c, loc["id"], source_text=str(eff.get("source_text") or ""),
+                         via="freetext")
 
 
 def ledger_add(conn, item_id, delta):
@@ -690,6 +736,7 @@ _VALIDATORS = {
     "establish_capability": _v_establish, "narrate": _v_narrate,
     "fill_water": _v_fill_water, "barricade": _v_barricade, "leave_note": _v_leave_note,
     "charge_device": _v_charge_device, "drink": _v_drink,
+    "declare_item": _v_declare_item,
 }
 _APPLIERS = {
     "move_to": _a_move, "discover": _a_discover, "transfer": _a_transfer,
@@ -698,6 +745,7 @@ _APPLIERS = {
     "establish_capability": _a_establish, "narrate": _a_narrate,
     "fill_water": _a_fill_water, "barricade": _a_barricade, "leave_note": _a_leave_note,
     "charge_device": _a_charge_device, "drink": _a_drink,
+    "declare_item": _a_declare_item,
 }
 
 

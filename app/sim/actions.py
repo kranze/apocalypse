@@ -762,7 +762,7 @@ def _do_charge(conn, cid, action) -> dict[str, Any]:
     devices.sync(conn, gid)
     names = _item_names(conn)
     listing = ", ".join(f"{names.get(i, i)} +{g * 100:.0f} %" for i, g in done.items())
-    src = "am Stromnetz" if plan["source"] == "grid" else "aus der Powerbank"
+    src = devices.SOURCE_TEXT[plan["source"]]
     return _response(
         conn, "charge", cid, minutes_spent=adv["spent"], stopped=adv["stopped"],
         events=adv["events"], result={"source": plan["source"], "charged": done},
@@ -1015,11 +1015,11 @@ def _online_actions(conn, cid, gid, here) -> list[dict[str, Any]]:
     """Laden + Online-Aktionen für die Aktionsleiste (nur, was gerade geht)."""
     out: list[dict[str, Any]] = []
     loc_id = _power_loc_id(conn, cid, here)
-    plan = devices.grid_charge_plan(conn, gid, loc_id) or devices.powerbank_charge_plan(conn, gid)
+    plan = devices.charge_plan(conn, gid, loc_id)
     if plan is not None:
         out.append({
             "kind": "charge",
-            "label": "Laden (Stromnetz)" if plan["source"] == "grid" else "Laden (Powerbank)",
+            "label": "Laden (%s)" % devices.SOURCE_LABEL[plan["source"]],
             "source": plan["source"], "minutes": plan["minutes"],
         })
     best = devices.best_online_device(conn, gid)

@@ -7,6 +7,10 @@ Mutation, die nicht über eine Sim-Funktion lief, und wird geflaggt:
   Ist > Soll  -> aus dem Nichts erzeugt.
   Ist < Soll  -> spurlos verschwunden.
 
+Legitime Quellen: Lazy Generation und ``player_declared`` (Spielerwissen, Issue #54).
+Letztere ist in ``ledger_sources`` einzeln mitgeführt und wird gegen das Protokoll
+``declared_items`` gegengeprüft (jede deklarierte Menge muss gebucht sein).
+
 Plündern ist Transfer und ledger-neutral (Summe bleibt gleich). Lazy Generation
 bucht ihre Quelle ins Ledger, Verbrauch/Verderb ihre Senken — daher bleibt der
 Audit bei korrektem Sim-Kern immer drift-frei.
@@ -62,4 +66,28 @@ def run_audit(conn: sqlite3.Connection, now_tick: int) -> list[dict[str, Any]]:
                     payload={"item": item_id, "expected": soll, "actual": now_total},
                 )
             )
+    interrupts += _check_declared(conn, now_tick)
     return interrupts
+
+
+def _check_declared(conn: sqlite3.Connection, now_tick: int) -> list[dict[str, Any]]:
+    """``player_declared``: gebuchte Quelle je Item == Σ Protokoll (platzierte
+    Deklarationen). Abweichung = Buchung am Protokoll vorbei -> Alarm."""
+    booked = ledger.source_totals(conn, ledger.SOURCE_PLAYER_DECLARED)
+    logged: dict[str, float] = {}
+    for row in conn.execute(
+        "SELECT item_id, SUM(quantity) AS q FROM declared_items "
+        "WHERE status = 'placed' AND item_id IS NOT NULL GROUP BY item_id;"
+    ).fetchall():
+        logged[row["item_id"]] = row["q"] or 0.0
+    out = []
+    for item_id in set(booked) | set(logged):
+        diff = booked.get(item_id, 0.0) - logged.get(item_id, 0.0)
+        if abs(diff) > constants.AUDIT_EPS:
+            out.append(emit_event(
+                conn, now_tick, "system",
+                f"Bilanz-Alarm: {item_id} {diff:+.3f} (player_declared stimmt nicht mit dem "
+                f"Deklarations-Protokoll überein).",
+                severity="decision", subject_type="world", subject_id=1,
+                payload={"item": item_id, "source": ledger.SOURCE_PLAYER_DECLARED}))
+    return out

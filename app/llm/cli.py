@@ -253,6 +253,25 @@ class CliBackend(LLMBackend):
         return {"item_ids": [i for i in (out.get("item_ids") or []) if isinstance(i, str)],
                 "narration": out.get("narration", "")}
 
+    # --- declare_items (Spielerwissen, Issue #54) ----------------------
+    def declare_items(self, text, context) -> list[dict[str, Any]]:
+        prompt = (
+            "Der Spieler beschreibt, was in SEINER Wohnung und bei seinen Nachbarn steht (Spielerwissen, z.B. ein 100-kWh-Akku im Keller, ein Schweißgerät beim Nachbarn). Zerlege den Text in einzelne Gegenstände und liefere je Gegenstand einen Vorschlag. Beurteile die Plausibilität realistisch: Alltägliches und Haushaltsübliches (auch ein Hausakku, Generator, Werkzeug, Vorräte) ist plausibel; Absurdes (Flugzeug, Panzer, Atomreaktor, Raumschiff im Keller) ist plausible=false mit kurzer deutscher Begründung. Gib realistische Eigenschaften an: weight_kg je Stück, quantity, category (food|water|tool|material|fuel|medical|misc), provides/requires NUR aus der Liste bekannter Anforderungen, bei Energiespeichern capacity_kwh und charge_kwh (kWh). where='neighbour' für Gegenstände bei Nachbarn, sonst 'here'. Der Simulationskern klemmt jeden Vorschlag hart und legt Gegenstände selbst an; du behauptest nichts als geschehen.\n"
+            "Antworte NUR mit JSON: {\"items\": [{\"name\": str, \"category\": str, "
+            "\"weight_kg\": number|null, \"quantity\": number|null, \"provides\": [str], "
+            "\"requires\": [str], \"capacity_kwh\": number|null, \"charge_kwh\": number|null, "
+            "\"plausible\": bool, \"reason\": str, \"where\": \"here\"|\"neighbour\"}]}\n\n"
+            f"Bekannte Anforderungen: {context.get('known_requirements')}\n"
+            f"Kategorien: {context.get('categories')}\n"
+            f"Text: {text!r}\nPerson: {json.dumps(context.get('profile'), ensure_ascii=False)}"
+        )
+        out = self._json(prompt)
+        if not out or not isinstance(out.get("items"), list):
+            status.record_fallback("declare_items", self._why())
+            return self._fallback.declare_items(text, context)
+        status.record_ok("declare_items")
+        return [i for i in out["items"] if isinstance(i, dict)]
+
     # --- narrate_location ----------------------------------------------
     def narrate_location(self, location, profile=None, history=None) -> str:
         history_block = _history_compact(history)

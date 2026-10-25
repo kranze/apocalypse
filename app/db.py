@@ -124,6 +124,22 @@ _MIGRATIONS = (
     " freetext INTEGER NOT NULL DEFAULT 0, freetext_rejected INTEGER NOT NULL DEFAULT 0,"
     " meters_walked REAL NOT NULL DEFAULT 0.0);",
     "INSERT OR IGNORE INTO game_stats (id) VALUES (1);",
+    # Spielerwissen (Issue #54)
+    "CREATE TABLE IF NOT EXISTS ledger_sources ("
+    " item_id TEXT NOT NULL REFERENCES item_catalog(id), source TEXT NOT NULL,"
+    " total REAL NOT NULL DEFAULT 0.0, PRIMARY KEY (item_id, source));",
+    "CREATE TABLE IF NOT EXISTS declared_items ("
+    " id INTEGER PRIMARY KEY, item_id TEXT REFERENCES item_catalog(id),"
+    " name TEXT NOT NULL, status TEXT NOT NULL, location_id INTEGER,"
+    " where_hint TEXT NOT NULL DEFAULT 'here', quantity REAL NOT NULL DEFAULT 0.0,"
+    " kind TEXT, provides_json TEXT NOT NULL DEFAULT '[]',"
+    " requires_json TEXT NOT NULL DEFAULT '[]', capacity_kwh REAL, reason TEXT,"
+    " source_text TEXT, via TEXT, proposal_json TEXT,"
+    " created_tick INTEGER NOT NULL DEFAULT 0);",
+    "CREATE TABLE IF NOT EXISTS energy_state ("
+    " item_id TEXT PRIMARY KEY REFERENCES item_catalog(id),"
+    " capacity_kwh REAL NOT NULL, charge_kwh REAL NOT NULL,"
+    " updated_tick INTEGER NOT NULL DEFAULT 0);",
 )
 
 # (tabelle, spalte, DDL-Definition) — nur angelegt, wenn die Spalte fehlt.
@@ -249,6 +265,15 @@ def init_db() -> None:
         # Statische Stammdaten idempotent nachziehen (Seed für bestehende DBs).
         _seed_static(conn)
         conn.commit()
+
+        # Bestehende Spielstände ohne Wohnung (vor Issue #54): Zuhause als echten Ort nachziehen.
+        from .sim import home as _home
+        ch = conn.execute(
+            "SELECT home_lat, home_lon FROM characters WHERE type = 'player' "
+            "AND home_lat IS NOT NULL AND home_lon IS NOT NULL ORDER BY id LIMIT 1;").fetchone()
+        if ch is not None and _home.home_location(conn) is None:
+            _home.ensure_home(conn, ch["home_lat"], ch["home_lon"])
+            conn.commit()
 
         # world_seed aus Config übernehmen, solange noch der Platzhalter (0) steht.
         row = conn.execute("SELECT world_seed FROM world WHERE id = 1;").fetchone()

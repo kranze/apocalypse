@@ -68,15 +68,13 @@ def values_at(seed: int, loc_id: int, tick: int) -> dict[str, float]:
     }
 
 
-HOME_LOC_ID = -1  # Pseudo-Ort-ID für das Zuhause (kein locations-Eintrag); stabil -> deterministisch
-
-
 def infra_loc(conn: sqlite3.Connection, lat, lon, reach: float,
               character_id: int = 1) -> int | None:
     """Ort, dessen Infrastruktur (Strom/Wasser) an (lat, lon) gilt: nächste Location
-    in ``reach`` (entdeckt oder nicht — jedes Gebäude hat Hahn/Steckdose), sonst
-    ``HOME_LOC_ID``, wenn man beim Heimat-Anker des Charakters steht, sonst None.
-    Rein lesend; ``infra_for`` akzeptiert auch die Pseudo-ID."""
+    in ``reach`` (entdeckt oder nicht — jedes Gebäude hat Hahn/Steckdose), sonst None.
+    Das Zuhause ist eine echte Location (Typ ``home``, siehe ``home.py``) und wird
+    daher wie jeder andere Ort gefunden. Rein lesend. ``character_id`` bleibt für
+    Aufrufer-Kompatibilität erhalten."""
     if lat is None or lon is None:
         return None
     import math
@@ -90,14 +88,7 @@ def infra_loc(conn: sqlite3.Connection, lat, lon, reach: float,
         d = dist(r["lat"], r["lon"])
         if d <= best_d:
             best, best_d = r["id"], d
-    if best is not None:
-        return best
-    h = conn.execute(
-        "SELECT home_lat, home_lon FROM characters WHERE id = ?;", (character_id,)
-    ).fetchone()
-    if h is not None and h["home_lat"] is not None and dist(h["home_lat"], h["home_lon"]) <= constants.HOME_RADIUS_M:
-        return HOME_LOC_ID
-    return None
+    return best
 
 
 def cooling_lost_tick(seed: int, loc_id: int) -> int:

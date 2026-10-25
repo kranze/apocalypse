@@ -24,7 +24,7 @@ from typing import Any
 
 from ..llm import tools as llm_tools
 from ..llm.base import FEASIBILITY
-from . import capabilities, devices, effects, generation, kb, requirements
+from . import capabilities, declare, devices, effects, energy, generation, kb, requirements
 
 # Obergrenze der Werkzeugaufrufe je erlaubter Modell-Runde (Schutz gegen
 # Endlos-Aufrufe innerhalb einer Runde, z.B. extrem viele Parallel-Calls).
@@ -40,6 +40,8 @@ def hint_for(reason: str | None) -> str | None:
                 "Generator.")
     if reason.startswith("missing:"):
         return f"Dir fehlt: {reason.split(':', 1)[1]}."
+    if reason.startswith("declare_"):
+        return declare.reject_text(reason)
     return {
         "no_target": "Davon ist nichts in der Nähe.",
         "no_food": "Nichts direkt Essbares dabei.",
@@ -224,6 +226,7 @@ class AdjudicationToolbox:
         gid = self._gid()
         loc_id = effects._power_loc(self.conn, self.context)
         return {"devices": devices.status(self.conn, gid),
+                "energy_storage": energy.status(self.conn, gid, loc_id),
                 "network": devices.network_quality(self.conn, loc_id)}
 
     def _r_get_world_state(self, args) -> dict[str, Any]:

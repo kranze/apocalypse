@@ -14,6 +14,7 @@ from typing import Any
 
 from .base import LLMBackend, proposal
 import hashlib
+import re
 
 _LOCATION_SYNONYMS: dict[str, str] = {
     "supermarkt": "supermarket", "markt": "supermarket", "laden": "supermarket",
@@ -26,6 +27,9 @@ _LOCATION_SYNONYMS: dict[str, str] = {
 _RULES: list[tuple[str, tuple[str, ...]]] = [
     ("too_complex", ("mobilfunk", "handynetz", "netz wieder", "netz reaktiv",
                      "internet wieder", "ganze stadt", "alle masten")),
+    ("declare_item", ("steht ein", "steht eine", "stehen ", "mein nachbar", "meine nachbarin",
+                      "nachbar hat", "nachbarn haben", "ich besitze", "ich habe ein ",
+                      "ich habe eine ", "liegt ein", "lagert")),
     ("fill_water", ("abfüll", "abfuell", "fülle", "fuelle", "zapf")),
     ("leave_note", ("zettel", "notiz", "nachricht hinterlass", "hinterlasse", "hinterlass")),
     ("barricade", ("barrikad", "verrammel")),
@@ -77,6 +81,86 @@ _ITEM_KEYWORDS: dict[str, tuple[str, ...]] = {
     "painkillers": ("schmerz", "tablette"),
     "first_aid_kit": ("erste hilfe", "verbandkasten"),
 }
+
+
+# --- Spielerwissen (Issue #54): deklarierte Gegenstände, deterministische Tabelle ----
+# Schlüsselwörter -> plausibler Gegenstand mit festen Werten. Nur Vorschläge; der
+# Sim-Kern klemmt und legt an. Absurdes (Flugzeug, Panzer, Reaktor ...) wird abgelehnt.
+_DECLARE_ABSURD = (
+    "flugzeug", "a380", "airbus", "boeing", "jumbo", "panzer", "atomreaktor", "reaktor",
+    "atombombe", "rakete", "raumschiff", "hubschrauber", "helikopter", "u-boot", "kampfjet",
+    "lokomotive", "ufo", "kreuzfahrtschiff", "frachter",
+)
+_DECLARE_TABLE: list[tuple[tuple[str, ...], dict[str, Any]]] = [
+    (("akku", "batterie", "powerstation", "powerwall", "stromspeicher"),
+     {"name": "Hausakku", "category": "tool", "storage": True}),
+    (("generator", "stromaggregat", "notstrom"),
+     {"name": "Stromgenerator", "category": "tool", "weight_kg": 25.0, "provides": ["power"]}),
+    (("schweißgerät", "schweissgerät", "schweißgeraet", "schweissgeraet", "schweißen"),
+     {"name": "Schweißgerät", "category": "tool", "weight_kg": 18.0, "requires": ["power"]}),
+    (("werkzeugkasten", "werkzeug"),
+     {"name": "Werkzeugkasten", "category": "tool", "weight_kg": 8.0}),
+    (("fahrrad",), {"name": "Fahrrad", "category": "tool", "weight_kg": 14.0}),
+    (("vorrat", "vorräte", "konserve", "lebensmittel", "proviant", "nudel", "reis", "mehl"),
+     {"name": "Vorräte", "category": "food", "weight_kg": 0.4, "quantity": 10.0}),
+    (("trinkwasser", "wasserkanister", "kanister", "wasser"),
+     {"name": "Trinkwasser", "category": "water", "weight_kg": 1.0, "quantity": 20.0}),
+    (("campingkocher", "gaskocher", "kocher", "grill", "kamin", "feuerstelle", "ofen"),
+     {"name": "Gaskocher", "category": "tool", "weight_kg": 2.0, "provides": ["heat"]}),
+    (("funkgerät", "funkgeraet", "funk", "sender"),
+     {"name": "Funkgerät", "category": "tool", "weight_kg": 1.0, "provides": ["transmitter"]}),
+    (("verbandkasten", "medikament", "erste hilfe"),
+     {"name": "Verbandkasten", "category": "medical", "weight_kg": 0.6}),
+    (("taschenlampe", "lampe"), {"name": "Taschenlampe", "category": "tool", "weight_kg": 0.3}),
+    (("seil",), {"name": "Seil", "category": "material", "weight_kg": 1.0}),
+]
+_KWH = re.compile(r"(\d+(?:[.,]\d+)?)[\s-]*kwh")
+
+
+def _declare_clause(clause: str) -> dict[str, Any] | None:
+    """Vorschlag zu EINEM Satzteil oder None, wenn nichts Erkennbares drinsteht."""
+    t = clause.lower()
+    where = "neighbour" if "nachbar" in t else "here"
+    for word in _DECLARE_ABSURD:
+        if word in t:
+            name = word.upper() if len(word) <= 4 else word.capitalize()
+            return {"name": name, "category": "misc", "weight_kg": 100000.0, "quantity": 1.0,
+                    "provides": [], "requires": [], "capacity_kwh": None, "charge_kwh": None,
+                    "plausible": False, "where": where,
+                    "reason": f"{name} passt in kein Haus: viel zu groß und zu schwer, "
+                              "so etwas steht nicht in einem Keller."}
+    for kws, spec in _DECLARE_TABLE:
+        if not any(k in t for k in kws):
+            continue
+        out = {"name": spec["name"], "category": spec["category"],
+               "weight_kg": spec.get("weight_kg"), "quantity": spec.get("quantity", 1.0),
+               "provides": list(spec.get("provides", [])),
+               "requires": list(spec.get("requires", [])),
+               "capacity_kwh": None, "charge_kwh": None, "plausible": True,
+               "reason": "Alltäglicher Gegenstand.", "where": where}
+        if spec.get("storage"):
+            m = _KWH.search(t.replace("kilowattstunden", "kwh"))
+            powerstation = "powerstation" in t
+            cap = float(m.group(1).replace(",", ".")) if m else (1.0 if powerstation else 10.0)
+            out["name"] = ("Powerstation" if powerstation else "Hausakku") + f" ({cap:g} kWh)"
+            out["capacity_kwh"] = cap
+            out["weight_kg"] = round(min(900.0, max(5.0, 8.0 * cap)), 1)
+        return out
+    return None
+
+
+def _declare_proposals(text: str) -> list[dict[str, Any]]:
+    """Zerlegt einen Text in Satzteile und liefert je erkanntem Gegenstand einen
+    Vorschlag. Gar nichts Erkennbares -> ein abgelehnter Vorschlag zum ganzen Text."""
+    parts = [p.strip() for p in re.split(r"[,;\n.]| und ", text or "") if p.strip()]
+    out = [x for x in (_declare_clause(p) for p in parts) if x]
+    if out:
+        return out
+    name = (text or "").strip()[:40] or "Unbekannt"
+    return [{"name": name, "category": "misc", "weight_kg": None, "quantity": 1.0,
+             "provides": [], "requires": [], "capacity_kwh": None, "charge_kwh": None,
+             "plausible": False, "where": "neighbour" if "nachbar" in name.lower() else "here",
+             "reason": "Damit kann ich nichts Glaubhaftes anfangen."}]
 
 
 def _note_text(text: str) -> str:
@@ -221,6 +305,10 @@ class RuleBackend(_CompanionRules, LLMBackend):
         if match == "advance_time":
             return proposal(effects=[{"op": "advance_time"}],
                             narration="Du lässt etwas Zeit verstreichen.")
+        if match == "declare_item":
+            return proposal(
+                effects=[{"op": "declare_item", **x} for x in _declare_proposals(text)[:3]],
+                narration="Du weißt genau, was da steht.")
         if match == "consume_food":
             return proposal(effects=[{"op": "consume_food"}], narration="Du isst etwas.")
         if match == "charge_device":
@@ -276,6 +364,10 @@ class RuleBackend(_CompanionRules, LLMBackend):
             "narration": p.get("narration", ""),
         })
         return {"stop": "finish"}
+
+    def declare_items(self, text, context) -> list[dict[str, Any]]:
+        """Deterministisch: Schlüsselwort-Tabelle (siehe ``_DECLARE_TABLE``)."""
+        return _declare_proposals(text)
 
     def narrate_location(self, location, profile=None, history=None) -> str:
         name = location.get("name") or location.get("label") or location.get("type") or "ein Ort"

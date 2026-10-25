@@ -237,6 +237,33 @@ class ClaudeBackend(LLMBackend):
             messages.append({"role": "user", "content": results})
         return {"stop": "limit"}
 
+    def declare_items(self, text, context) -> list[dict[str, Any]]:
+        """Onboarding-Batch (Issue #54): Freitext -> Vorschläge für deklarierte
+        Gegenstände. Reine Vorschläge; Klemmen/Anlegen macht der Sim-Kern. Bei
+        API-Fehlern deterministischer Stub."""
+        user = json.dumps({
+            "text": text, "bekannte_anforderungen": context.get("known_requirements"),
+            "kategorien": context.get("categories"), "person": context.get("profile"),
+        }, ensure_ascii=False)
+        try:
+            resp = self._client.messages.create(
+                model=INTERPRET_MODEL, max_tokens=1500,
+                system=[{"type": "text", "text": _DECLARE_SYSTEM,
+                         "cache_control": {"type": "ephemeral"}}],
+                tools=[_DECLARE_TOOL],
+                tool_choice={"type": "auto"},  # erzwungenes tool_choice: 400 auf Sonnet 5.5
+                messages=[{"role": "user", "content": user}],
+            )
+            out = next((b.input for b in resp.content if b.type == "tool_use"), None)
+        except Exception as e:
+            status.record_fallback("declare_items", e)
+            return self._fallback.declare_items(text, context)
+        if not out or not isinstance(out.get("items"), list):
+            status.record_fallback("declare_items", "keine tool_use-Antwort")
+            return self._fallback.declare_items(text, context)
+        status.record_ok("declare_items")
+        return [i for i in out["items"] if isinstance(i, dict)]
+
     def narrate_location(self, location, profile=None, history=None) -> str:
         sys = (
             "Du erzählst knapp und atmosphärisch (2–3 Sätze) den ersten Eindruck "
@@ -404,6 +431,40 @@ class ClaudeBackend(LLMBackend):
         status.record_ok("match_items")
         return {"item_ids": [i for i in (out.get("item_ids") or []) if isinstance(i, str)],
                 "narration": out.get("narration", "")}
+
+
+_DECLARE_SYSTEM = (
+    "Der Spieler beschreibt, was in SEINER Wohnung und bei seinen Nachbarn steht (Spielerwissen, z.B. ein 100-kWh-Akku im Keller, ein Schweißgerät beim Nachbarn). Zerlege den Text in einzelne Gegenstände und liefere je Gegenstand einen Vorschlag. Beurteile die Plausibilität realistisch: Alltägliches und Haushaltsübliches (auch ein Hausakku, Generator, Werkzeug, Vorräte) ist plausibel; Absurdes (Flugzeug, Panzer, Atomreaktor, Raumschiff im Keller) ist plausible=false mit kurzer deutscher Begründung. Gib realistische Eigenschaften an: weight_kg je Stück, quantity, category (food|water|tool|material|fuel|medical|misc), provides/requires NUR aus der Liste bekannter Anforderungen, bei Energiespeichern capacity_kwh und charge_kwh (kWh). where='neighbour' für Gegenstände bei Nachbarn, sonst 'here'. Der Simulationskern klemmt jeden Vorschlag hart und legt Gegenstände selbst an; du behauptest nichts als geschehen. Antworte nur über das Werkzeug."
+)
+
+_DECLARE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "category": {"type": "string",
+                     "enum": ["food", "water", "tool", "material", "fuel", "medical", "misc"]},
+        "weight_kg": {"type": ["number", "null"]},
+        "quantity": {"type": ["number", "null"]},
+        "provides": {"type": "array", "items": {"type": "string"}},
+        "requires": {"type": "array", "items": {"type": "string"}},
+        "capacity_kwh": {"type": ["number", "null"]},
+        "charge_kwh": {"type": ["number", "null"]},
+        "plausible": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "where": {"type": "string", "enum": ["here", "neighbour"]},
+    },
+    "required": ["name", "category", "plausible", "reason", "where"],
+}
+
+_DECLARE_TOOL = {
+    "name": "report_declarations",
+    "description": "Vorschläge für die vom Spieler genannten Gegenstände (Spielerwissen).",
+    "input_schema": {
+        "type": "object",
+        "properties": {"items": {"type": "array", "items": _DECLARE_ITEM_SCHEMA}},
+        "required": ["items"],
+    },
+}
 
 
 _COMPANION_TOOL = {

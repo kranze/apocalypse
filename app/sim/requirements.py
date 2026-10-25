@@ -15,7 +15,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Callable
 
-from . import constants, decay_world, kb
+from . import constants, decay_world, energy, kb
 
 # Anforderungen, die es von Haus aus gibt (zusätzlich zu allem, wofür die KB
 # bereits ein ``provides:<req>``-Topic führt).
@@ -38,6 +38,7 @@ def satisfy(
     req: str,
     owned_fn: Callable[[str], float] | None = None,
     location_id: int | None = None,
+    kwh_used: dict[str, float] | None = None,
 ) -> dict | None:
     """Liefert {item, consume} eines vorhandenen Lieferanten für ``req``, oder None.
 
@@ -51,9 +52,19 @@ def satisfy(
     zählt dort als Lieferant (``{"item": "grid", "consume": 0}`` — kein Item,
     nichts zu verbuchen), solange der lokale Strom über ``CHARGE_POWER_MIN``
     liegt (dieselbe Schwelle wie beim Laden). Sonst greifen die KB-Lieferanten
-    (Generator usw.)."""
+    (Generator usw.).
+
+    Energiespeicher (deklarierter Hausakku/Powerstation, ``energy``): für ``power``
+    der Lieferant nach dem Netz — am Ort oder getragen, mit endlichem Vorrat. Das
+    Ergebnis trägt ``kwh`` (Entnahme je Nutzung, ``STORAGE_RECIPE_KWH``); gebucht
+    wird sie beim Anwenden über ``draw``. ``kwh_used`` = bereits vorgemerkte
+    Entnahmen (Staging des Adjudikators)."""
     if req == "power" and location_id is not None and grid_power_ok(conn, location_id):
         return {"item": GRID, "consume": 0.0}
+    if req == "power":
+        store = energy.pick(conn, group_id, location_id, constants.STORAGE_RECIPE_KWH, kwh_used)
+        if store is not None:
+            return {"item": store, "consume": 0.0, "kwh": constants.STORAGE_RECIPE_KWH}
     for fact in kb.list_topic(conn, f"provides:{req}"):
         item_id = fact["key"]
         value = fact.get("value") or {}
@@ -70,6 +81,13 @@ def satisfy(
         if (owned or 0.0) >= required_min:
             return {"item": item_id, "consume": consume}
     return None
+
+
+def draw(conn: sqlite3.Connection, src: dict | None) -> None:
+    """Bucht die Energie-Entnahme eines ``satisfy``-Ergebnisses (nur Speicher
+    tragen ``kwh``; Netz/Generator/Items: nichts zu tun)."""
+    if src and src.get("kwh"):
+        energy.draw(conn, src["item"], src["kwh"])
 
 
 def providers(conn: sqlite3.Connection, req: str) -> list[str]:

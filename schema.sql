@@ -467,3 +467,39 @@ INSERT INTO groups (id, name, is_player_group) VALUES (1, 'Spieler', 1);
 INSERT INTO characters (id, name, type, group_id, age, hunger)
 VALUES (1, 'Spieler', 'player', 1, 35, 1.0);
 UPDATE groups SET leader_id = 1 WHERE id = 1;
+
+-- Spielerwissen (Issue #54): vom Spieler deklarierte Gegenstände. ``ledger_sources``
+-- führt je Item und Quelle (z.B. 'player_declared') das Soll mit — die Bilanz-Prüfung
+-- kennt sie als legitime Quelle. ``declared_items`` ist das Protokoll (jederzeit
+-- nachvollziehbar). ``energy_state`` = Kapazität/Ladestand deklarierter Energiespeicher
+-- (kein Ledger-Gut, wie device_state).
+CREATE TABLE ledger_sources (
+    item_id TEXT NOT NULL REFERENCES item_catalog(id),
+    source  TEXT NOT NULL,
+    total   REAL NOT NULL DEFAULT 0.0,
+    PRIMARY KEY (item_id, source)
+);
+CREATE TABLE declared_items (
+    id            INTEGER PRIMARY KEY,
+    item_id       TEXT REFERENCES item_catalog(id),   -- NULL solange abgelehnt
+    name          TEXT NOT NULL,
+    status        TEXT NOT NULL,                       -- placed|pending|rejected
+    location_id   INTEGER,
+    where_hint    TEXT NOT NULL DEFAULT 'here',        -- here|neighbour
+    quantity      REAL NOT NULL DEFAULT 0.0,
+    kind          TEXT,                                -- storage|provider|plain
+    provides_json TEXT NOT NULL DEFAULT '[]',
+    requires_json TEXT NOT NULL DEFAULT '[]',
+    capacity_kwh  REAL,
+    reason        TEXT,
+    source_text   TEXT,
+    via           TEXT,                                -- onboarding|freetext
+    proposal_json TEXT,                                -- geklemmter Vorschlag (für pending)
+    created_tick  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE energy_state (
+    item_id      TEXT PRIMARY KEY REFERENCES item_catalog(id),
+    capacity_kwh REAL NOT NULL,
+    charge_kwh   REAL NOT NULL,
+    updated_tick INTEGER NOT NULL DEFAULT 0
+);

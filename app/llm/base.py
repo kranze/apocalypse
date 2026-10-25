@@ -26,6 +26,7 @@ EFFECT_OPS = (
     "move_to", "discover", "transfer", "consume_food", "prepare", "search",
     "advance_time", "transform", "establish_capability", "narrate",
     "fill_water", "barricade", "leave_note", "charge_device", "drink",
+    "declare_item",
 )
 
 # Geschlossenes Intentions-Vokabular des Companions (muss zu sim/companion.INTENTS passen).
@@ -104,6 +105,19 @@ class LLMBackend:
         """Kompakte Tageszusammenfassung des Gesprächs (Text, kein Zustand).
         Default: leer (der Sim-Kern speichert dann nichts)."""
         return ""
+
+    def declare_items(self, text: str, context: dict[str, Any]) -> list[dict[str, Any]]:
+        """Spielerwissen (Issue #54, kontrollierte Ausnahme vom Eisernen Prinzip): zerlegt
+        einen Freitext („Was gibt es bei dir zu Hause und bei deinen Nachbarn?“) in
+        VORSCHLÄGE für deklarierte Gegenstände. Je Vorschlag:
+        {name, category, weight_kg, quantity, provides: [..], requires: [..],
+         capacity_kwh, charge_kwh, plausible: bool, reason: str, where: 'here'|'neighbour'}.
+        ``provides``/``requires`` nur aus ``context['known_requirements']``,
+        ``category`` aus ``context['categories']``. Das LLM beurteilt die Plausibilität
+        (Unplausibles: ``plausible=False`` + Begründung); der Sim-Kern klemmt jeden
+        Vorschlag einzeln und legt Gegenstände an — das LLM schreibt nie.
+        Default: nichts."""
+        return []
 
     def match_items(
         self,

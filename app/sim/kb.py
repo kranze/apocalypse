@@ -1,6 +1,7 @@
 """Knowledge Base — verbindliche Fakten für den Adjudikator (DESIGN.md §8/§9).
 
-Provenance-Vorrang: ``curated`` > ``player_verified`` > ``llm_inferred``. Ein
+Provenance-Vorrang: ``curated`` > ``player_verified`` = ``player_declared`` > ``llm_inferred``
+(``player_declared``: Spielerwissen über eigene Gegenstände, Issue #54). Ein
 höherwertiger Fakt darf nicht von einem niederwertigen überschrieben werden
 (kuratiertes Wissen ist bindend). Player-Overrides reichern die KB als
 ``player_verified`` an — so wird das Spiel über die Spielerschaft schlauer.
@@ -14,7 +15,7 @@ import json
 import sqlite3
 from typing import Any
 
-_RANK = {"curated": 3, "player_verified": 2, "llm_inferred": 1}
+_RANK = {"curated": 3, "player_verified": 2, "player_declared": 2, "llm_inferred": 1}
 
 
 def lookup(conn: sqlite3.Connection, topic: str, key: str) -> dict[str, Any] | None:

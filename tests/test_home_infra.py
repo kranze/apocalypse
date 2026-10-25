@@ -1,4 +1,4 @@
-"""Tests: Zuhause zählt als Infra-Ort (Hahn, Steckdose) auch ohne locations-Zeile,
+"""Tests: Zuhause ist ein echter Ort (Typ ``home``) und damit Infra-Ort (Hahn, Steckdose),
 und abgelehnte Freitext-Pläne zeigen nie die Erfolgs-Erzählung des Modells.
 Offline, Stub-Backend, fixer Seed."""
 from __future__ import annotations
@@ -10,7 +10,7 @@ import pytest
 os.environ["WASTELAND_LLM_BACKEND"] = "stub"
 import app.llm as llm_mod
 import app.osm.roads as roads_module
-from app.sim import actions, adjudicator, constants, decay_world, devices, kb, provision
+from app.sim import actions, adjudicator, constants, decay_world, devices, home, kb, provision
 from tests.test_actions import HOME, add_group_item
 from tests.conftest import make_conn, set_seed
 from tests.test_infra_gates_adjudicator import (
@@ -33,12 +33,13 @@ def offline(monkeypatch):
 
 @pytest.fixture
 def conn():
-    """Spieler zu Hause, KEIN Gebäude in Reichweite (Heimat ist keine Location)."""
+    """Spieler zu Hause; das Zuhause ist die echte Location ``home`` (kein weiteres Gebäude)."""
     c = make_conn()
     set_seed(c, 1337)
     kb.seed_defaults(c)
     c.execute("UPDATE characters SET lat=?, lon=?, home_lat=?, home_lon=? WHERE id=1;",
               (*HOME, *HOME))
+    home.ensure_home(c, *HOME)
     c.commit()
     yield c
     c.close()
@@ -84,7 +85,7 @@ def test_tap_not_available_far_from_home(conn):
 
 def test_grid_charge_at_home_day0(conn):
     give_phone(conn, 0.2)
-    assert decay_world.infra_loc(conn, *HOME, constants.LOOT_REACH_M) == decay_world.HOME_LOC_ID
+    assert decay_world.infra_loc(conn, *HOME, constants.LOOT_REACH_M) == home.home_location(conn)["id"]
     r = actions.perform(conn, 1, {"kind": "charge", "source": "grid"})
     assert r["ok"], r
     assert phone_charge(conn) > 0.2
@@ -93,7 +94,7 @@ def test_grid_charge_at_home_day0(conn):
 def test_grid_charge_at_home_blackout_rejected(conn):
     give_phone(conn, 0.2)
     set_tick(conn, 60 * DAY)
-    assert devices.grid_charge_plan(conn, 1, decay_world.HOME_LOC_ID) is None
+    assert devices.grid_charge_plan(conn, 1, home.home_location(conn)["id"]) is None
 
 
 def test_rejected_freetext_has_no_success_narration(conn):

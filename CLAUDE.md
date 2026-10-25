@@ -19,6 +19,13 @@ wirkungslos, weil nur validierter Sim-Kern-Code die DB ändert. Wenn du irgendwo
 versucht bist, LLM-Output direkt in die DB zu schreiben: STOPP. Das bricht das
 Prinzip und ist nie erlaubt.
 
+**Einzige kontrollierte Ausnahme — Spielerwissen (#54):** Der Spieler darf
+plausible Gegenstände in seinem eigenen Haus und bei Nachbarn (Umkreis
+`DECLARE_RADIUS_M`) deklarieren („im Keller steht ein 100-kWh-Akku“). Das LLM
+beurteilt nur Plausibilität und schlägt Eigenschaften vor; der Sim-Kern klemmt,
+legt an und bucht im Ledger als eigene Quelle `player_declared`. Kein anderer
+Pfad darf Items erzeugen — die Suche erfindet weiterhin nichts.
+
 ## Tech-Stack
 - Backend: Python + FastAPI
 - DB: SQLite (Schema in `schema.sql`)
