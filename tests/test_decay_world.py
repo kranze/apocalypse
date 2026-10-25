@@ -173,9 +173,18 @@ def test_tap_water_day0_but_not_after_pressure_loss(conn):
     assert _thirst(conn) == pytest.approx(0.2)  # Druck weg -> kein Wasser aus dem Nichts
 
 
-def test_tap_needs_discovered_location(conn):
-    insert_location(conn, loc_id=LOC)  # unentdeckt
+def test_tap_works_in_undiscovered_building(conn):
+    insert_location(conn, loc_id=LOC)  # unentdeckt — jedes Gebäude hat einen Hahn
     conn.execute("UPDATE characters SET lat=49.0, lon=11.0, thirst=0.2 WHERE id=1;")
+    conn.commit()
+    with conn:
+        auto_provision(conn, 10, 0)
+    assert _thirst(conn) > 0.2
+
+
+def test_no_tap_outside_buildings_and_home(conn):
+    conn.execute("UPDATE characters SET lat=49.0, lon=11.0, home_lat=49.1, home_lon=11.0, "
+                 "thirst=0.2 WHERE id=1;")
     conn.commit()
     with conn:
         auto_provision(conn, 10, 0)

@@ -355,6 +355,7 @@ def test_death_ends_game_with_cause_and_epilogue(world):
 
 def test_death_during_action_finishes_game(world):
     set_char(world, hunger=0.0, thirst=0.0, sleep=0.0)
+    set_clock(world, 4)  # Wasserdruck weg (Zuhause/Gebäude haben sonst Leitungswasser)
     r = None
     for _ in range(20):
         r = actions.perform(world, 1, {"kind": "wait", "minutes": 600})

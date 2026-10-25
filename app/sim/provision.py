@@ -52,7 +52,7 @@ def group_location(conn, group_id) -> int | None:
     return _current_location(conn, ch["lat"], ch["lon"]) if ch else None
 
 
-def _tap_available(conn, loc_id) -> bool:
+def _tap_available(conn, loc_id) -> bool:  # loc_id: Infra-Ort (auch HOME_LOC_ID)
     """Leitungswasser nur, solange am Ort der Wasserdruck über der Schwelle liegt.
     Vorher gab es keine implizite Wasserquelle (Wasser kam nur aus Items)."""
     if loc_id is None:
@@ -63,7 +63,8 @@ def _tap_available(conn, loc_id) -> bool:
 def tap_here(conn, lat, lon) -> bool:
     """Leitungswasser am Standort (lat/lon) verfügbar? Öffentliche Naht für die
     Effekt-Validierung des Adjudikators (gleiche Regel wie die Auto-Versorgung)."""
-    return _tap_available(conn, _current_location(conn, lat, lon))
+    return _tap_available(conn, decay_world.infra_loc(
+        conn, lat, lon, constants.PROVISION_SOURCE_RADIUS_M))
 
 
 def drink(conn, character_id) -> dict[str, Any]:
@@ -79,7 +80,8 @@ def drink(conn, character_id) -> dict[str, Any]:
         if _available(conn, ch["group_id"], loc, WATER) >= 1.0 and \
                 _consume(conn, ch["group_id"], loc, WATER, 1.0) >= 1.0:
             source = "inventory"
-        elif _tap_available(conn, loc):
+        elif _tap_available(conn, decay_world.infra_loc(
+                conn, ch["lat"], ch["lon"], constants.PROVISION_SOURCE_RADIUS_M, character_id)):
             source = "tap"
         else:
             return {"ok": False, "reason": "no_tap_water"}
@@ -231,6 +233,8 @@ def auto_provision(
     ).fetchall():
         gid = char["group_id"]
         loc = _current_location(conn, char["lat"], char["lon"])
+        tap_loc = decay_world.infra_loc(
+            conn, char["lat"], char["lon"], constants.PROVISION_SOURCE_RADIUS_M, char["id"])
 
         # --- Durst: trinken ---
         thirst, drank, tap = char["thirst"], 0.0, 0.0
@@ -241,7 +245,7 @@ def auto_provision(
             steps += 1
             if _available(conn, gid, loc, WATER) >= 1.0 and _consume(conn, gid, loc, WATER, 1.0) >= 1.0:
                 pass  # aus Rucksack/Ort-Vorrat (Ledger-gebucht)
-            elif _tap_available(conn, loc):
+            elif _tap_available(conn, tap_loc):
                 tap += 1.0  # Leitungswasser: nur bei Wasserdruck, kein Inventar-Item
             else:
                 break

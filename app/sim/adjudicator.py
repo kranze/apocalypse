@@ -147,6 +147,13 @@ def _run_loop(conn: sqlite3.Connection, character_id: int, text: str,
     return toolbox, info
 
 
+def _reject_narration(reason, prefix: str = "") -> str:
+    """Kurze Ablehnungs-Erzählung aus dem Sim-Kern-Grund. Die Erzählung des
+    Modells setzt Erfolg voraus und darf bei Ablehnung nie als geschehen erscheinen."""
+    hint = hint_for(reason) or "Das ist so nicht möglich."
+    return f"{prefix}Das klappt so nicht: {hint}"
+
+
 def _log_turn(conn, character_id, text, result) -> dict[str, Any]:
     with conn:
         chatlog.append(conn, character_id, "player", text)
@@ -188,7 +195,8 @@ def adjudicate(conn: sqlite3.Connection, character_id: int, text: str) -> dict[s
         # Schleife -> letzter Grund (der, an dem das Umplanen scheiterte).
         reason = rej[0]["reason"] if not toolbox.allow_partial else rej[-1]["reason"]
         return _log_turn(conn, character_id, text, _verdict(
-            False, understanding=understanding, feasibility=feas, narration=narration,
+            False, understanding=understanding, feasibility=feas,
+            narration=_reject_narration(reason),
             reason=reason, escalate=True, hint=hint_for(reason)))
 
     if not plan:
@@ -202,13 +210,15 @@ def adjudicate(conn: sqlite3.Connection, character_id: int, text: str) -> dict[s
     ok, reason = effects.validate_all(conn, character_id, plan, context)
     if not ok:
         return _log_turn(conn, character_id, text, _verdict(
-            False, understanding=understanding, feasibility=feas, narration=narration,
+            False, understanding=understanding, feasibility=feas,
+            narration=_reject_narration(reason),
             reason=reason, escalate=True, hint=hint_for(reason)))
 
     ok, applied, reason = effects.apply_atomic(conn, character_id, plan, context)
     if not ok:
         return _log_turn(conn, character_id, text, _verdict(
-            False, understanding=understanding, feasibility=feas, narration=narration,
+            False, understanding=understanding, feasibility=feas,
+            narration=_reject_narration(reason),
             reason=reason, escalate=True, hint=hint_for(reason)))
 
     # Narration der Effekte (z.B. Such-Ergebnis) übernimmt, wenn vorhanden.
@@ -219,12 +229,18 @@ def adjudicate(conn: sqlite3.Connection, character_id: int, text: str) -> dict[s
     final = eff_narr or narration or "Erledigt."
 
     # Soft-Fehler eines Appliers (z.B. eat ohne Essbares) sichtbar machen.
+    ok_narr = " ".join(
+        a["result"]["narration"] for a in applied
+        if isinstance(a["result"], dict) and a["result"].get("narration")
+        and a["result"].get("ok") is not False).strip()
     soft_fail = next((a for a in applied
                       if isinstance(a["result"], dict) and a["result"].get("ok") is False), None)
     if soft_fail:
         return _log_turn(conn, character_id, text, _verdict(
             False, understanding=understanding, feasibility=feas,
-            narration=final or narration, reason=soft_fail["result"].get("reason"),
+            narration=_reject_narration(
+                soft_fail["result"].get("reason"), (ok_narr + " ") if ok_narr else ""),
+            reason=soft_fail["result"].get("reason"),
             escalate=True, effects_applied=applied))
 
     return _log_turn(conn, character_id, text, _verdict(

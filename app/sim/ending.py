@@ -196,8 +196,10 @@ def habitability(conn) -> dict[str, Any]:
 
     smell = _clamp01(day / constants.HAB_DECAY_FULL_DAYS) * (0.4 + 0.6 * density)
     here = _here(conn)
-    if here is not None:
-        infra = decay_world.infra_for(conn, here["id"])
+    home_id = None if here is not None or p is None else decay_world.infra_loc(
+        conn, lat, lon, 0.0, PLAYER_ID)
+    if here is not None or home_id is not None:
+        infra = decay_world.infra_for(conn, here["id"] if here is not None else home_id)
         water, power = infra["water"], infra["power"]
     else:
         wi = decay_world.world_infra(conn)

@@ -32,6 +32,7 @@ from ..llm import get_backend
 from . import (
     capabilities,
     constants,
+    decay_world,
     devices,
     generation,
     kb,
@@ -153,8 +154,11 @@ class Staged:
 def _power_loc(conn, ctx) -> int | None:
     """Ort für Netzstrom-Prüfungen: nächste Location in Lade-Reichweite (wie bei
     der Aktion ``charge``) oder None."""
-    loc = resolve_location(conn, ctx.get("player"), None, reach=constants.LOOT_REACH_M)
-    return loc["id"] if loc else None
+    p = ctx.get("player")
+    if p is None or p["lat"] is None:
+        return None
+    return decay_world.infra_loc(conn, p["lat"], p["lon"], constants.LOOT_REACH_M,
+                                 p["id"] if "id" in p.keys() else 1)
 
 
 def _satisfy(conn, gid, req, st: Staged, extra: dict[str, float] | None = None,

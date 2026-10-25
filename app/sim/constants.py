@@ -60,6 +60,7 @@ THIRST_ACTIVITY_PER_KM = 0.02
 # Unter ...TRIGGER wird automatisch versorgt, bis ...TARGET erreicht (falls Vorrat).
 PROVISION_TRIGGER = 0.7
 PROVISION_TARGET = 0.9
+HOME_RADIUS_M = 40.0               # "zu Hause": Hahn/Steckdose des Heimat-Ankers (kein locations-Eintrag)
 PROVISION_SOURCE_RADIUS_M = 30.0   # "Umgebung" = entdeckter Ort in Reichweite
 # Schlaf: müder Charakter ruht automatisch (Schlaf/Tag Erholung beim Ruhen).
 SLEEP_RECOVERY_PER_DAY = 2.0

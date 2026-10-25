@@ -68,6 +68,38 @@ def values_at(seed: int, loc_id: int, tick: int) -> dict[str, float]:
     }
 
 
+HOME_LOC_ID = -1  # Pseudo-Ort-ID für das Zuhause (kein locations-Eintrag); stabil -> deterministisch
+
+
+def infra_loc(conn: sqlite3.Connection, lat, lon, reach: float,
+              character_id: int = 1) -> int | None:
+    """Ort, dessen Infrastruktur (Strom/Wasser) an (lat, lon) gilt: nächste Location
+    in ``reach`` (entdeckt oder nicht — jedes Gebäude hat Hahn/Steckdose), sonst
+    ``HOME_LOC_ID``, wenn man beim Heimat-Anker des Charakters steht, sonst None.
+    Rein lesend; ``infra_for`` akzeptiert auch die Pseudo-ID."""
+    if lat is None or lon is None:
+        return None
+    import math
+
+    def dist(a_lat, a_lon):
+        mlon = 111_320.0 * math.cos(math.radians((lat + a_lat) / 2))
+        return math.hypot((a_lon - lon) * mlon, (a_lat - lat) * 111_320.0)
+
+    best, best_d = None, reach
+    for r in conn.execute("SELECT id, lat, lon FROM locations;").fetchall():
+        d = dist(r["lat"], r["lon"])
+        if d <= best_d:
+            best, best_d = r["id"], d
+    if best is not None:
+        return best
+    h = conn.execute(
+        "SELECT home_lat, home_lon FROM characters WHERE id = ?;", (character_id,)
+    ).fetchone()
+    if h is not None and h["home_lat"] is not None and dist(h["home_lat"], h["home_lon"]) <= constants.HOME_RADIUS_M:
+        return HOME_LOC_ID
+    return None
+
+
 def cooling_lost_tick(seed: int, loc_id: int) -> int:
     """Tick, ab dem die Kühlung am Ort ausgefallen ist (refrigeration < Schwelle).
     Reine Funktion; Grundlage für den schnelleren Verderb (resources.py)."""

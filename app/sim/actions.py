@@ -23,6 +23,7 @@ from . import (
     adjudicator,
     companion,
     constants,
+    decay_world,
     devices,
     effects,
     ending,
@@ -735,13 +736,21 @@ def _do_download(conn, cid, action) -> dict[str, Any]:
     )
 
 
+def _power_loc_id(conn, cid, here) -> int | None:
+    """Infra-Ort fürs Netz-Laden: Gebäude in Reichweite, sonst das Zuhause."""
+    if here:
+        return here["id"]
+    ch = conn.execute("SELECT lat, lon FROM characters WHERE id = ?;", (cid,)).fetchone()
+    return decay_world.infra_loc(conn, ch["lat"], ch["lon"], 0.0, cid) if ch else None
+
+
 def _do_charge(conn, cid, action) -> dict[str, Any]:
     gid = _group_id(conn, cid)
     if not devices.peek(conn, gid):
         return _reject(conn, "charge", cid, "no_device", _ONLINE_HINTS["no_device"])
     here = _location_here(conn, cid, constants.LOOT_REACH_M)
     plan = devices.charge_plan(
-        conn, gid, here["id"] if here else None, action.get("source"))
+        conn, gid, _power_loc_id(conn, cid, here), action.get("source"))
     if plan is None:
         if devices.charge_block_reason(conn, gid) == "already_full":
             return _reject(conn, "charge", cid, "already_full", "Alle Geräte sind schon voll.")
@@ -1005,7 +1014,7 @@ def perform(conn: sqlite3.Connection, character_id: int, action: dict) -> dict[s
 def _online_actions(conn, cid, gid, here) -> list[dict[str, Any]]:
     """Laden + Online-Aktionen für die Aktionsleiste (nur, was gerade geht)."""
     out: list[dict[str, Any]] = []
-    loc_id = here["id"] if here else None
+    loc_id = _power_loc_id(conn, cid, here)
     plan = devices.grid_charge_plan(conn, gid, loc_id) or devices.powerbank_charge_plan(conn, gid)
     if plan is not None:
         out.append({
