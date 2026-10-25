@@ -20,7 +20,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from . import lore
+from . import lore, status
 from .base import COMPANION_INTENTS, EFFECT_OPS, FEASIBILITY, LLMBackend, proposal
 from .stub import RuleBackend
 
@@ -75,10 +75,18 @@ class CliBackend(LLMBackend):
         return proc.stdout
 
     def _json(self, prompt: str) -> dict | None:
+        self._err = None
         try:
-            return _extract_json(self._run(prompt))
-        except Exception:
+            out = _extract_json(self._run(prompt))
+        except Exception as e:
+            self._err = e
             return None
+        if out is None:
+            self._err = "kein JSON in der CLI-Antwort"
+        return out
+
+    def _why(self) -> Any:
+        return getattr(self, "_err", None) or "unbrauchbare Antwort"
 
     # --- interpret -----------------------------------------------------
     def interpret(self, text: str, context: dict[str, Any]) -> dict[str, Any]:
@@ -100,7 +108,9 @@ class CliBackend(LLMBackend):
         )
         out = self._json(prompt)
         if not out:
+            status.record_fallback("interpret", self._why())
             return self._fallback.interpret(text, context)
+        status.record_ok("interpret")
         feas = out.get("feasibility") if out.get("feasibility") in FEASIBILITY else "feasible"
         effects = [e for e in (out.get("effects") or []) if isinstance(e, dict) and e.get("op") in EFFECT_OPS]
         return proposal(
@@ -118,8 +128,11 @@ class CliBackend(LLMBackend):
     # prüft/normalisiert alles; unbrauchbare Antwort -> Stub-Schleife.
     def run_adjudication(self, text, context, toolbox, max_iterations=8) -> dict[str, Any]:
         try:
-            return self._loop(text, context, toolbox)
-        except Exception:
+            res = self._loop(text, context, toolbox)
+            status.record_ok("run_adjudication")
+            return res
+        except Exception as e:
+            status.record_fallback("run_adjudication", getattr(self, "_err", None) or e)
             toolbox.reset()
             return self._fallback.run_adjudication(text, context, toolbox, max_iterations)
 
@@ -182,7 +195,9 @@ class CliBackend(LLMBackend):
         )
         out = self._json(prompt)
         if not out or not isinstance(out.get("speech"), str):
+            status.record_fallback("companion_reply", self._why())
             return self._fallback.companion_reply(persona, memory, context, player_text)
+        status.record_ok("companion_reply")
         intents = [i for i in (out.get("intents") or []) if isinstance(i, dict)]
         return {"speech": out["speech"], "intents": intents}
 
@@ -195,7 +210,9 @@ class CliBackend(LLMBackend):
         )
         out = self._json(prompt)
         if not out or not out.get("personality"):
+            status.record_fallback("describe_survivor", self._why())
             return self._fallback.describe_survivor(identity, context)
+        status.record_ok("describe_survivor")
         return out
 
     def summarize_day(self, persona, entries) -> str:
@@ -203,8 +220,14 @@ class CliBackend(LLMBackend):
         prompt = ("Fasse dieses Gespräch in höchstens 3 knappen deutschen Sätzen zusammen "
                   "(nur Gesagtes, keine neuen Fakten). Nur den Text.\n" + lines)
         try:
-            return self._run(prompt).strip() or self._fallback.summarize_day(persona, entries)
-        except Exception:
+            txt = self._run(prompt).strip()
+            if txt:
+                status.record_ok("summarize_day")
+                return txt
+            status.record_fallback("summarize_day", "leere Antwort")
+            return self._fallback.summarize_day(persona, entries)
+        except Exception as e:
+            status.record_fallback("summarize_day", e)
             return self._fallback.summarize_day(persona, entries)
 
     # --- match_items ---------------------------------------------------
@@ -224,7 +247,9 @@ class CliBackend(LLMBackend):
         )
         out = self._json(prompt)
         if not out:
+            status.record_fallback("match_items", self._why())
             return self._fallback.match_items(query, location, candidates, profile)
+        status.record_ok("match_items")
         return {"item_ids": [i for i in (out.get("item_ids") or []) if isinstance(i, str)],
                 "narration": out.get("narration", "")}
 
@@ -241,8 +266,13 @@ class CliBackend(LLMBackend):
         )
         try:
             txt = self._run(prompt).strip()
-            return txt or self._fallback.narrate_location(location, profile)
-        except Exception:
+            if txt:
+                status.record_ok("narrate_location")
+                return txt
+            status.record_fallback("narrate_location", "leere Antwort")
+            return self._fallback.narrate_location(location, profile)
+        except Exception as e:
+            status.record_fallback("narrate_location", e)
             return self._fallback.narrate_location(location, profile)
 
     # --- Epilog (Slice M5) ----------------------------------------------
@@ -253,8 +283,13 @@ class CliBackend(LLMBackend):
              "highlights": highlights}, ensure_ascii=False))
         try:
             txt = self._run(prompt).strip()
-            return txt or self._fallback.narrate_epilogue(evaluation, profile, companion, highlights)
-        except Exception:
+            if txt:
+                status.record_ok("narrate_epilogue")
+                return txt
+            status.record_fallback("narrate_epilogue", "leere Antwort")
+            return self._fallback.narrate_epilogue(evaluation, profile, companion, highlights)
+        except Exception as e:
+            status.record_fallback("narrate_epilogue", e)
             return self._fallback.narrate_epilogue(evaluation, profile, companion, highlights)
 
 

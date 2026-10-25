@@ -282,7 +282,9 @@ _CATEGORY_LABELS = {
 def location_arrive(location_id: int) -> dict:
     """Ankunft an einem Ort: entdecken + kurze Claude-Geschichte zum Ort."""
     from .llm import get_backend
+    from .llm import status as llm_status
 
+    fb0 = llm_status.thread_fallbacks()
     conn = db.get_connection()
     try:
         loc = conn.execute(
@@ -302,10 +304,13 @@ def location_arrive(location_id: int) -> dict:
         conn.commit()
     finally:
         conn.close()
-    return {
+    out = {
         "ok": True, "status": disc.get("status"), "narration": narration,
         "inventory": disc.get("inventory", []),
     }
+    if llm_status.thread_fallbacks() > fb0:
+        out["llm_fallback"] = True  # Text stammt aus dem Stub-Rückfall
+    return out
 
 
 @app.get("/chat")
@@ -548,13 +553,19 @@ def get_ending() -> dict | None:
 def post_action(req: ActionRequest) -> dict:
     """Aktionsbasierte Zeit: Aktion ausführen, Welt um deren Dauer vorrücken.
     Immer HTTP 200 — Ablehnungen stehen in ``ok``/``reason``/``hint``."""
+    from .llm import status as llm_status
+
+    fb0 = llm_status.thread_fallbacks()
     conn = db.get_connection()
     try:
-        return actions_mod.perform(
+        res = actions_mod.perform(
             conn, req.character_id, req.model_dump(exclude={"character_id"})
         )
     finally:
         conn.close()
+    if isinstance(res, dict) and llm_status.thread_fallbacks() > fb0:
+        res["llm_fallback"] = True  # additiv: Text kam aus dem Stub-Rückfall
+    return res
 
 
 @app.get("/actions/available")
@@ -894,6 +905,15 @@ def api_info() -> dict:
         "home_preload_radius_m": config.HOME_PRELOAD_RADIUS_M,
         "llm_backend": get_backend().name,  # "stub" oder "claude"
     }
+
+
+@app.get("/llm/status")
+def llm_status_endpoint() -> dict:
+    """Prozessweiter LLM-Status: Backend, echte Aufrufe, stille Rückfälle, letzter Fehler."""
+    from .llm import get_backend
+    from .llm import status as llm_status
+
+    return llm_status.snapshot(get_backend().name)
 
 
 # Statisches Frontend zuletzt mounten, damit alle API-Routen Vorrang haben.

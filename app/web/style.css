@@ -268,3 +268,49 @@ button:disabled { opacity: .4; cursor: default; }
 .comp-label { color: var(--text); }
 .comp-text { color: var(--muted); }
 .end-stats { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 10px; }
+
+/* --- Dialogfenster „Szene" (Issue #53) --- */
+.scene-backdrop { position: absolute; inset: 0; z-index: 1500; display: flex; align-items: flex-end; justify-content: center; padding: 20px 20px 28px; background: rgba(8, 10, 14, 0.58); }
+.scene-sheet { width: 680px; max-width: 100%; max-height: 82vh; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 10px 40px rgba(0,0,0,.6); padding: 16px 20px 14px; }
+.scene-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.scene-head h2 { margin: 0; font-size: 18px; color: var(--accent2); }
+.scene-when { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.scene-x { flex: none; width: 30px; padding: 2px; }
+.scene-body { overflow-y: auto; min-height: 60px; padding: 10px 2px; display: flex; flex-direction: column; gap: 10px; }
+.sc-entry p { margin: 0 0 8px; }
+.sc-entry p:last-child { margin-bottom: 0; }
+.sc-narr { font-family: Georgia, "Times New Roman", serif; font-size: 16px; line-height: 1.7; }
+.sc-event { background: #4a2f12; border: 1px solid #e0a030; border-radius: 8px; padding: 8px 12px; color: #ffe2b3; font-weight: 600; font-size: 14px; line-height: 1.5; }
+.sc-decision { background: #5a1f1d; border-color: var(--crit); color: #ffd9d6; }
+.sc-player { align-self: flex-end; max-width: 85%; background: var(--accent2); color: #fff; border-radius: 10px; padding: 6px 11px; font-size: 14px; }
+.sc-companion { align-self: flex-start; max-width: 90%; background: #2d3b2a; border: 1px solid #5f8f4e; color: #e6f2df; border-radius: 10px; padding: 7px 12px; font-size: 15px; line-height: 1.55; }
+.sc-companion .sc-who { display: block; font-size: 11px; color: #9fc58f; margin-bottom: 2px; }
+.sc-system { color: var(--muted); font-size: 12px; font-style: italic; }
+.sc-fb { display: inline-block; margin-left: 6px; font-family: system-ui, sans-serif; font-size: 10px; font-style: normal; font-weight: 400; color: var(--muted); border: 1px dashed var(--border); border-radius: 8px; padding: 0 6px; vertical-align: middle; }
+.scene-opts, .scene-sub { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0 2px; border-top: 1px solid var(--border); }
+.scene-sub { border-top: 0; padding-top: 2px; }
+.scene-opts button, .scene-sub button { flex: none; font-size: 13px; padding: 7px 11px; }
+.scene-opts .cost { opacity: .7; }
+.scene-opts .talk-btn { border-color: #5f8f4e; }
+.scene-opts .quick { background: #2d3b2a; border-color: #5f8f4e; }
+.scene-sub .dl-row { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; }
+.scene-sub .dl-title { flex: 1; }
+.scene-sub .dl-meta { color: var(--muted); }
+.scene-sub .dl-head { width: 100%; color: var(--muted); font-size: 12px; }
+.scene-input { display: flex; gap: 6px; margin-top: 8px; }
+.scene-input input { flex: 1; min-width: 0; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 9px 11px; font-size: 14px; }
+.scene-input input:focus { outline: none; border-color: var(--accent2); }
+.scene-input input.talking { border-color: #5f8f4e; box-shadow: 0 0 0 1px #5f8f4e; }
+.scene-input button { flex: none; padding: 7px 14px; }
+.scene-foot { margin-top: 8px; display: flex; justify-content: flex-end; }
+.scene-continue { flex: none; background: var(--accent); color: #11150f; border: 0; font-weight: 600; padding: 8px 20px; }
+.scene-continue:hover { filter: brightness(1.08); background: var(--accent); }
+.toast { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1400; background: rgba(29,34,43,.97); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; font-size: 13px; max-width: 80%; }
+
+/* HUD: KI-Anzeige, kompaktere Aktionsleiste, Tagebuch */
+.llm-status { font-size: 11px; color: var(--muted); cursor: help; }
+.llm-status.ok { color: var(--accent); }
+.llm-status.fallback { color: var(--warn); }
+.actionbar { gap: 3px; }
+.actionbar button { padding: 4px 6px; font-size: 11px; }
+#chat.hidden { display: none; }

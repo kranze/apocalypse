@@ -10,7 +10,7 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   />
-  <link rel="stylesheet" href="/style.css?v=12" />
+  <link rel="stylesheet" href="/style.css?v=13" />
 </head>
 <body>
   <div id="map"></div>
@@ -22,6 +22,7 @@
     <h1>Wasteland</h1>
     <div class="row daytime" id="daytime">—</div>
     <div class="row" id="clock">—</div>
+    <div class="row llm-status" id="llm-status" title="KI-Status">KI: …</div>
     <div class="row buttons">
       <button id="btn-newgame" title="Neues Spiel beginnen">⟳ Neues Spiel</button>
     </div>
@@ -70,16 +71,14 @@
     <h2>Rucksack <span id="carry" class="count"></span></h2>
     <ul id="inventory"><li class="empty">leer</li></ul>
 
-    <h2>Chat</h2>
-    <div id="chat"></div>
+    <h2>Aktionen</h2>
+    <div class="row buttons"><button id="btn-freetext" title="Freitext: sag, was du tust (öffnet den Dialog)">Freitext …</button></div>
     <div id="actionbar" class="actionbar"></div>
     <div id="dl-chooser" class="dl-chooser hidden"></div>
-    <div id="talk-indicator" class="talk-indicator hidden"><span id="talk-name">Gespräch</span><button id="talk-cancel" title="Zurück (Esc)">✕</button></div>
-    <div class="row cmdrow">
-      <input id="cmd" type="text" placeholder="Was tust du? (z. B. ich suche Wasser)" autocomplete="off" />
-      <button id="btn-cmd">▶</button>
-    </div>
-    <p class="hint">Karte klicken = laufen (kostet Zeit) · Gebäude klicken → „Gehe zu" · im Chat sagen, was du tust/suchst.</p>
+
+    <div class="row"><button id="btn-diary" class="toggle">▸ Tagebuch</button></div>
+    <div id="chat" class="hidden"></div>
+    <p class="hint">Karte klicken = laufen (kostet Zeit) · Gebäude klicken → „Gehe zu" · Texte und Optionen erscheinen im Dialog, das Tagebuch hält alles fest.</p>
     <p class="hint"><a href="/worldmap" style="opacity:0.5;font-size:0.8em;">🌍 Welt-Übersicht (Debug)</a></p>
   </div>
 
@@ -91,6 +90,25 @@
     <div id="panel-actions"></div>
     <ul id="panel-inv"></ul>
   </div>
+
+  <!-- Dialogfenster „Szene": Erzähltext, Optionen, Freitext -->
+  <div id="scene" class="scene-backdrop hidden">
+    <div class="scene-sheet" role="dialog" aria-modal="true" aria-labelledby="scene-title">
+      <div class="scene-head">
+        <div><h2 id="scene-title">—</h2><div id="scene-when" class="scene-when"></div></div>
+        <button id="scene-close" class="scene-x" title="Schließen (Esc)">✕</button>
+      </div>
+      <div id="scene-body" class="scene-body"></div>
+      <div id="scene-opts" class="scene-opts"></div>
+      <div id="scene-sub" class="scene-sub hidden"></div>
+      <div class="scene-input">
+        <input id="scene-input" type="text" placeholder="Was tust du?" autocomplete="off" />
+        <button id="scene-send" title="Senden">▶</button>
+      </div>
+      <div class="scene-foot"><button id="scene-done" class="scene-continue">Weiter (Esc)</button></div>
+    </div>
+  </div>
+  <div id="toast" class="toast hidden"></div>
 
   <!-- Entscheidung (M5) -->
   <div id="decide-overlay" class="overlay hidden">
@@ -167,6 +185,6 @@
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
   ></script>
-  <script src="/app.js?v=15"></script>
+  <script src="/app.js?v=16"></script>
 </body>
 </html>

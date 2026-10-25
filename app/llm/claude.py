@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import lore
+from . import lore, status
 from .base import COMPANION_INTENTS, EFFECT_OPS, FEASIBILITY, LLMBackend, proposal
 from .stub import RuleBackend
 
@@ -147,10 +147,13 @@ class ClaudeBackend(LLMBackend):
                 messages=messages,
             )
             out = next((b.input for b in resp.content if b.type == "tool_use"), None)
-        except Exception:
+        except Exception as e:
+            status.record_fallback("interpret", e)
             return self._fallback.interpret(text, context)
         if not out:
+            status.record_fallback("interpret", "keine tool_use-Antwort")
             return self._fallback.interpret(text, context)
+        status.record_ok("interpret")
 
         feas = out.get("feasibility")
         if feas not in FEASIBILITY:
@@ -170,8 +173,11 @@ class ClaudeBackend(LLMBackend):
         """Mehrschritt-Schleife gegen die Toolbox des Sim-Kerns. Bei API-Fehlern
         (nichts geschrieben, nur Staging im Speicher) -> Stub-Schleife."""
         try:
-            return self._loop(text, context, toolbox)
-        except Exception:
+            res = self._loop(text, context, toolbox)
+            status.record_ok("run_adjudication")
+            return res
+        except Exception as e:
+            status.record_fallback("run_adjudication", e)
             toolbox.reset()
             return self._fallback.run_adjudication(text, context, toolbox, max_iterations)
 
@@ -252,8 +258,14 @@ class ClaudeBackend(LLMBackend):
                 messages=[{"role": "user", "content": user}],
             )
             parts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
-            return " ".join(parts).strip() or self._fallback.narrate_location(location, profile)
-        except Exception:
+            txt = " ".join(parts).strip()
+            if txt:
+                status.record_ok("narrate_location")
+                return txt
+            status.record_fallback("narrate_location", "leere Antwort")
+            return self._fallback.narrate_location(location, profile)
+        except Exception as e:
+            status.record_fallback("narrate_location", e)
             return self._fallback.narrate_location(location, profile)
 
 
@@ -270,9 +282,14 @@ class ClaudeBackend(LLMBackend):
                 messages=[{"role": "user", "content": user}],
             )
             parts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
-            return " ".join(parts).strip() or self._fallback.narrate_epilogue(
-                evaluation, profile, companion, highlights)
-        except Exception:
+            txt = " ".join(parts).strip()
+            if txt:
+                status.record_ok("narrate_epilogue")
+                return txt
+            status.record_fallback("narrate_epilogue", "leere Antwort")
+            return self._fallback.narrate_epilogue(evaluation, profile, companion, highlights)
+        except Exception as e:
+            status.record_fallback("narrate_epilogue", e)
             return self._fallback.narrate_epilogue(evaluation, profile, companion, highlights)
 
     # --- Companion (Slice M4) -------------------------------------------
@@ -296,10 +313,13 @@ class ClaudeBackend(LLMBackend):
             if out is None:  # nur Text: als Rede nehmen, ohne Intentionen
                 text = " ".join(b.text for b in resp.content if b.type == "text").strip()
                 out = {"speech": text, "intents": []} if text else None
-        except Exception:
+        except Exception as e:
+            status.record_fallback("companion_reply", e)
             return self._fallback.companion_reply(persona, memory, context, player_text)
         if not out:
+            status.record_fallback("companion_reply", "leere Antwort")
             return self._fallback.companion_reply(persona, memory, context, player_text)
+        status.record_ok("companion_reply")
         return {"speech": str(out.get("speech") or ""), "intents": list(out.get("intents") or [])}
 
     def describe_survivor(self, identity, context, history=None) -> dict[str, Any]:
@@ -316,9 +336,14 @@ class ClaudeBackend(LLMBackend):
                 messages=[{"role": "user", "content": user}],
             )
             out = next((b.input for b in resp.content if b.type == "tool_use"), None)
-        except Exception:
+        except Exception as e:
+            status.record_fallback("describe_survivor", e)
             return self._fallback.describe_survivor(identity, context)
-        return dict(out) if out else self._fallback.describe_survivor(identity, context)
+        if not out:
+            status.record_fallback("describe_survivor", "keine tool_use-Antwort")
+            return self._fallback.describe_survivor(identity, context)
+        status.record_ok("describe_survivor")
+        return dict(out)
 
     def summarize_day(self, persona, entries) -> str:
         sys = ("Fasse das Gespräch eines Tages aus Sicht des Companions in höchstens "
@@ -333,8 +358,14 @@ class ClaudeBackend(LLMBackend):
                     {"persona": persona, "gespraech": lines}, ensure_ascii=False)}],
             )
             parts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
-            return " ".join(parts).strip() or self._fallback.summarize_day(persona, entries)
-        except Exception:
+            txt = " ".join(parts).strip()
+            if txt:
+                status.record_ok("summarize_day")
+                return txt
+            status.record_fallback("summarize_day", "leere Antwort")
+            return self._fallback.summarize_day(persona, entries)
+        except Exception as e:
+            status.record_fallback("summarize_day", e)
             return self._fallback.summarize_day(persona, entries)
 
     def match_items(self, query, location, candidates, profile=None, history=None) -> dict[str, Any]:
@@ -364,10 +395,13 @@ class ClaudeBackend(LLMBackend):
                 messages=[{"role": "user", "content": user}],
             )
             out = next((b.input for b in resp.content if b.type == "tool_use"), None)
-        except Exception:
+        except Exception as e:
+            status.record_fallback("match_items", e)
             return self._fallback.match_items(query, location, candidates, profile)
         if not out:
+            status.record_fallback("match_items", "keine tool_use-Antwort")
             return self._fallback.match_items(query, location, candidates, profile)
+        status.record_ok("match_items")
         return {"item_ids": [i for i in (out.get("item_ids") or []) if isinstance(i, str)],
                 "narration": out.get("narration", "")}
 

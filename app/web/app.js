@@ -83,6 +83,270 @@ function log(msg, severity) {
   chat(severity === "decision" ? "decision" : "system", msg);
 }
 
+// --- Dialogfenster „Szene" (Issue #53) ----------------------------------
+// Alle Texte gehen weiter ins Tagebuch (#chat). Zusätzlich sammelt emit() sie
+// während einer Aktion in sceneBuf; danach öffnet presentScene() das Dialogfenster
+// (oder hängt an das offene an). Blockiert ein Entscheidungsdialog, wird in die
+// Warteschlange gelegt und nach dessen Schließen der Reihe nach gezeigt.
+let sceneBuf = null;          // aktuell sammelnder Puffer (nur innerhalb doAction) | null
+let sceneTitleHint = null;    // Ortsname aus arriveAt für die Kopfzeile
+let curFallback = false;      // laufende Antwort stammt aus dem Stub-Rückfall
+let hereName = "Unterwegs";   // zuletzt betretener Ort
+const sceneQueue = [];
+let sceneOpen = false;
+let sceneSub = null;          // aufgeklapptes Unter-Menü {a}
+let lastAvail = [];           // letzte /actions/available
+
+const QUICK_REPLIES = [
+  "Komm mit mir.", "Hast du Wasser?", "Was hast du früher gemacht?",
+  "Was meinst du: bleiben oder gehen?",
+];
+
+// kind: narr | event | decision | player | companion | system
+function emit(kind, text, opts) {
+  if (!text) return;
+  const diaryRole = { narr: "claude", companion: "companion", player: "player",
+                      event: "system", decision: "decision", system: "system" }[kind] || "system";
+  chat(diaryRole, text);
+  if (kind === "system" && !(opts && opts.scene)) return; // nur Tagebuch
+  const entry = { kind, text, fallback: !!(opts && opts.fallback) };
+  if (sceneBuf) sceneBuf.push(entry);
+  else if (sceneOpen) appendSceneEntries([entry]);
+}
+
+function sceneBlocked() { return decisionOpen; }
+
+function fillSceneEntry(e) {
+  const div = document.createElement("div");
+  div.className = "sc-entry sc-" + e.kind;
+  if (e.kind === "decision") div.classList.add("sc-event");
+  let text = String(e.text);
+  if (e.kind === "companion") {
+    const who = document.createElement("span");
+    who.className = "sc-who";
+    who.textContent = companionName();
+    div.appendChild(who);
+    const prefix = companionName() + ":";
+    if (text.startsWith(prefix)) text = text.slice(prefix.length).trim();
+  }
+  const paras = text.split(/\n+/).filter((x) => x.trim());
+  paras.forEach((t, i) => {
+    const p = document.createElement("p");
+    p.textContent = t.trim();
+    if (e.fallback && i === paras.length - 1) {
+      const m = document.createElement("span");
+      m.className = "sc-fb";
+      m.textContent = "Ersatztext";
+      m.title = "Die KI war nicht erreichbar – dieser Text kommt aus dem Ersatzmodus.";
+      p.appendChild(m);
+    }
+    div.appendChild(p);
+  });
+  return div;
+}
+
+function appendSceneEntries(entries) {
+  const body = document.getElementById("scene-body");
+  for (const e of entries) body.appendChild(fillSceneEntry(e));
+  body.scrollTop = body.scrollHeight;
+}
+
+function updateSceneHead(title) {
+  if (title) document.getElementById("scene-title").textContent = title;
+  const t = document.getElementById("daytime").textContent || "";
+  document.getElementById("scene-when").textContent = t === "—" ? "" : t;
+}
+
+function updateSceneInput() {
+  const input = document.getElementById("scene-input");
+  input.placeholder = talkMode ? `Was sagst du zu ${companionName()}?`
+    : overrideCommand ? "Begründung: womit erzeugst du Hitze?" : "Was tust du?";
+  input.classList.toggle("talking", talkMode);
+}
+
+function openSceneWindow(title, entries) {
+  sceneOpen = true;
+  sceneSub = null;
+  document.getElementById("scene-body").innerHTML = "";
+  appendSceneEntries(entries || []);
+  updateSceneHead(title || hereName);
+  updateSceneInput();
+  document.getElementById("scene").classList.remove("hidden");
+  renderSceneOptions();
+  setTimeout(() => { if (sceneOpen) document.getElementById("scene-input").focus(); }, 30);
+}
+
+function showSceneData(d) {
+  if (sceneOpen) {
+    appendSceneEntries(d.entries);
+    updateSceneHead(d.title);
+    renderSceneOptions();
+  } else {
+    openSceneWindow(d.title, d.entries);
+  }
+}
+
+function closeScene() {
+  if (!sceneOpen) return;
+  sceneOpen = false;
+  sceneSub = null;
+  if (talkMode) exitTalkMode();
+  document.getElementById("scene").classList.add("hidden");
+  pumpScene();
+}
+
+function pumpScene() {
+  if (gameOver) { sceneQueue.length = 0; return; }
+  if (sceneBlocked() || !sceneQueue.length) return;
+  showSceneData(sceneQueue.shift());
+}
+
+// Nach einer Aktion: gesammelte Einträge zeigen. Nur „echte" Texte öffnen das Fenster;
+// reine Hinweise/Ablehnungen erscheinen als kurzer Toast (und im Tagebuch).
+function presentScene(buf) {
+  if (!buf || !buf.length || gameOver) return;
+  const title = talkMode ? companionName() : (sceneTitleHint || (sceneOpen
+    ? document.getElementById("scene-title").textContent : hereName));
+  sceneTitleHint = null;
+  const substantive = buf.some((e) => e.kind !== "system");
+  if (!substantive && !sceneOpen) { toast(buf.map((e) => e.text).join(" ")); return; }
+  const d = { title, entries: buf };
+  if (sceneBlocked()) { sceneQueue.push(d); return; }
+  showSceneData(d);
+}
+
+let _toastTimer = null;
+function toast(text) {
+  const el = document.getElementById("toast");
+  if (!el || !text) return;
+  el.textContent = text;
+  el.classList.remove("hidden");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.add("hidden"), 4500);
+}
+
+function actionButton(a, cls) {
+  const b = document.createElement("button");
+  b.textContent = a.label;
+  if (cls) b.className = cls;
+  if (a.minutes != null) {
+    const c = document.createElement("span");
+    c.className = "cost";
+    c.textContent = ` · ${a.minutes} min`;
+    b.appendChild(c);
+  }
+  b.disabled = actionBusy;
+  return b;
+}
+
+function sceneRunAction(a, extra) {
+  const { label, minutes, options, ...payload } = a;
+  const p = { ...payload, ...(extra || {}) };
+  sceneSub = null;
+  if (p.kind === "walk") closeScene(); // Karte freigeben für die Lauf-Animation
+  doAction(p);
+}
+
+function renderSceneSub() {
+  const box = document.getElementById("scene-sub");
+  box.innerHTML = "";
+  if (!sceneSub) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  const a = sceneSub.a;
+  if (a.kind === "download") { renderChooser(a, box); return; }
+  for (const o of a.options || []) {
+    const b = document.createElement("button");
+    b.textContent = `${o.name} (${(+o.quantity).toFixed(0)})`;
+    b.disabled = actionBusy;
+    b.onclick = () => sceneRunAction({ kind: a.kind }, { item_id: o.item_id });
+    box.appendChild(b);
+  }
+}
+
+function renderSceneOptions() {
+  const box = document.getElementById("scene-opts");
+  if (!box) return;
+  box.innerHTML = "";
+  updateSceneInput();
+  const toggleSub = (a) => {
+    sceneSub = (sceneSub && sceneSub.a.kind === a.kind) ? null : { a };
+    renderSceneSub();
+  };
+  if (talkMode) {
+    for (const q of QUICK_REPLIES) {
+      const b = document.createElement("button");
+      b.className = "quick";
+      b.textContent = q;
+      b.disabled = actionBusy;
+      b.onclick = () => sceneSay(q);
+      box.appendChild(b);
+    }
+    const give = lastAvail.find((a) => a.kind === "give");
+    if (give) {
+      const b = actionButton({ ...give, label: `${companionName()} etwas geben …` });
+      b.onclick = () => toggleSub(give);
+      box.appendChild(b);
+    }
+    const end = document.createElement("button");
+    end.textContent = "Gespräch beenden";
+    end.onclick = closeScene;
+    box.appendChild(end);
+    renderSceneSub();
+    return;
+  }
+  for (const a of lastAvail) {
+    if (a.kind === "decide") {
+      const b = actionButton(a, "decide-btn");
+      b.onclick = () => openDecision(a, lastAvail.every((x) => x.kind === "decide"));
+      box.appendChild(b);
+    } else if (a.kind === "download") {
+      const b = actionButton(a);
+      b.onclick = () => toggleSub(a);
+      box.appendChild(b);
+    } else if (a.kind === "talk") {
+      const b = actionButton(a, "talk-btn");
+      b.onclick = () => openTalkScene();
+      box.appendChild(b);
+    } else {
+      const multi = a.options && a.options.length > 1;
+      const b = actionButton(multi ? { ...a, label: a.label + " …" } : a);
+      b.onclick = () => (multi ? toggleSub(a) : sceneRunAction(a));
+      box.appendChild(b);
+    }
+  }
+  renderSceneSub();
+}
+
+function sceneSay(text) {
+  const input = document.getElementById("scene-input");
+  input.value = text;
+  doCommand();
+}
+
+// Gespräch im Dialog: bleibt offen, bis der Spieler schließt. Verlauf aus /companion/chat.
+async function openTalkScene() {
+  if (gameOver || decisionOpen) return;
+  talkMode = true;
+  openSceneWindow(companionName(), []);
+  try {
+    const rows = await getJSON("/companion/chat?limit=12");
+    const entries = (rows || []).slice(-12).map((r) => ({
+      kind: r.role === "companion" ? "companion" : r.role === "player" ? "player" : "narr",
+      text: r.text, fallback: false,
+    }));
+    if (entries.length && sceneOpen && talkMode) {
+      document.getElementById("scene-body").innerHTML = "";
+      appendSceneEntries(entries);
+    }
+  } catch (e) { /* Verlauf nicht kritisch */ }
+}
+
+function openFreetextScene() {
+  if (gameOver || decisionOpen) return;
+  if (sceneOpen) { document.getElementById("scene-input").focus(); return; }
+  openSceneWindow(hereName, [{ kind: "narr", text: "Was tust du?", fallback: false }]);
+}
+
 // Lädt den persistierten Chat-Verlauf und rendert ihn einmalig beim Start.
 // "narrator" aus dem chatlog wird auf die CSS-Klasse "claude" gemappt.
 let _chatHistoryLoaded = false;
@@ -438,10 +702,10 @@ async function arriveAt(id) {
     const r = await postJSON(`/locations/${id}/arrive`, {});
     const loc = await getJSON(`/locations/${id}`);
     updateLocation(loc);
-    await selectLocation(id); // Panel öffnen (Typ/Status; Suche/Aktionen via Chat)
-    chat("claude", r.narration || "");
-    const input = document.getElementById("cmd");
-    input.placeholder = "Was willst du hier tun? (z. B. ich suche …)";
+    await selectLocation(id); // Panel öffnen (Typ/Status)
+    hereName = loc.name || loc.label || loc.type || hereName;
+    sceneTitleHint = hereName;
+    emit("narr", r.narration || "", { fallback: !!r.llm_fallback });
   } catch (e) { log("Fehler: " + e.message, "decision"); }
 }
 
@@ -553,7 +817,7 @@ function animateAlongPath(path) {
 // --- Tick / Aktionen ---------------------------------------------------
 function reportInterrupts(list) {
   for (const i of list || []) {
-    log(i.message, i.severity);
+    emit(i.severity === "decision" ? "decision" : "event", i.message);
     if (/^Jemand hat geantwortet/.test(i.message || "")) pendingFlash = true;
   }
 }
@@ -565,7 +829,7 @@ async function refreshDiscoveredMarkers() {
 // Aktions-UI sperren/entsperren, solange eine Aktion läuft.
 function setActionBusy(busy) {
   actionBusy = busy;
-  const sel = "#actionbar button, #actionbar select, #panel-actions button, #btn-cmd, #cmd";
+  const sel = "#actionbar button, #actionbar select, #panel-actions button, #scene-opts button, #scene-sub button, #scene-send, #scene-input, #btn-freetext";
   for (const el of document.querySelectorAll(sel)) el.disabled = busy;
 }
 
@@ -573,9 +837,10 @@ function setActionBusy(busy) {
 async function loadActionBar() {
   const bar = document.getElementById("actionbar");
   if (!bar) return;
-  if (gameOver) { bar.innerHTML = ""; return; }
+  if (gameOver) { bar.innerHTML = ""; lastAvail = []; return; }
   try {
     const av = await getJSON(`/actions/available?character_id=${PLAYER_ID}`);
+    lastAvail = av.actions || [];
     bar.innerHTML = "";
     const chooser = document.getElementById("dl-chooser");
     let keepChooser = false;
@@ -612,7 +877,7 @@ async function loadActionBar() {
       }
       b.disabled = actionBusy;
       b.onclick = () => {
-        if (a.kind === "talk") { enterTalkMode(); return; } // Text kommt aus dem Eingabefeld
+        if (a.kind === "talk") { openTalkScene(); return; } // Gespräch im Dialogfenster
         const { label, minutes, options, ...payload } = a; // kind + Parameter zurücksenden
         doAction(payload); // ohne item_id wählt der Sim-Kern das beste Item
       };
@@ -645,6 +910,7 @@ async function loadActionBar() {
       }
     }
     if (!keepChooser) { chooser.classList.add("hidden"); chooser.innerHTML = ""; }
+    if (sceneOpen) renderSceneOptions();
   } catch (e) { /* Leiste nicht kritisch */ }
 }
 
@@ -655,8 +921,8 @@ function fmtMinutes(m) {
 }
 
 // Paketauswahl für Wissens-Downloads (Teilfortschritt wird angezeigt).
-function renderChooser(a) {
-  const el = document.getElementById("dl-chooser");
+function renderChooser(a, target) {
+  const el = target || document.getElementById("dl-chooser");
   el.innerHTML = "";
   const head = document.createElement("div");
   head.className = "dl-head";
@@ -694,29 +960,36 @@ async function doAction(payload) {
   if (actionBusy || gameOver) return null;
   setActionBusy(true);
   let r = null;
+  const buf = [];
+  sceneBuf = buf;
   try {
     r = await postJSON("/actions", { character_id: PLAYER_ID, ...payload });
     await handleActionResult(r);
     if (payload.kind === "decide" && r.ok) { closeDecision(); await showEnding(); }
   } catch (e) {
-    log("Fehler: " + e.message, "decision");
+    emit("system", "Fehler: " + e.message, { scene: true });
   } finally {
+    sceneBuf = null;
+    curFallback = false;
     setActionBusy(false);
   }
   await loadActionBar();
   await refreshCompanion();
+  refreshLlmStatus();
+  presentScene(buf);
   return r;
 }
 
 async function handleActionResult(r) {
-  if (r.narration) chat("claude", r.narration);
-  if (r.hint) log(r.hint);
+  curFallback = !!r.llm_fallback;
+  if (r.narration) emit("narr", r.narration, { fallback: curFallback });
+  if (r.hint) emit("system", r.hint, { scene: true });
   if (!r.ok) {
     if (r.reason === "game_over") { await showEnding(); return; }
     if (!r.hint && !r.narration) {
       const msg = r.reason === "companion_not_here"
         ? "Der Begleiter ist nicht in Reichweite." : `Nicht möglich (${r.reason || "unbekannt"}).`;
-      log(msg);
+      emit("system", msg, { scene: true });
     }
     if (r.reason === "companion_not_here") exitTalkMode();
     return;
@@ -731,8 +1004,8 @@ async function handleActionResult(r) {
     await animateAlongPath(r.path);
     clearRoute();
   }
-  if (r.path && r.stopped === "interrupt") log("Der Weg wurde unterbrochen.");
-  if (r.path && r.stopped === "max") log("Du bist lange gelaufen und legst eine Pause ein.");
+  if (r.path && r.stopped === "interrupt") emit("system", "Der Weg wurde unterbrochen.", { scene: true });
+  if (r.path && r.stopped === "max") emit("system", "Du bist lange gelaufen und legst eine Pause ein.", { scene: true });
   if (r.player && r.player.lat != null) movePlayerMarker(r.player.lat, r.player.lon);
 
   await refreshState(); // HUD, Inventar, Endzustand
@@ -895,28 +1168,15 @@ function intentLine(it, applied) {
 
 function reportCompanionResult(res) {
   if (!res || typeof res !== "object") return;
-  if (res.speech) chat("companion", `${companionName()}: ${res.speech}`);
-  for (const it of res.intents_applied || []) log(intentLine(it, true));
-  for (const it of res.intents_rejected || []) log(intentLine(it, false));
+  if (res.speech) emit("companion", `${companionName()}: ${res.speech}`, { fallback: curFallback });
+  for (const it of res.intents_applied || []) emit("system", intentLine(it, true), { scene: true });
+  for (const it of res.intents_rejected || []) emit("system", intentLine(it, false), { scene: true });
   if (res.companion) applyCompanion(res.companion);
-}
-
-function enterTalkMode() {
-  talkMode = true;
-  const input = document.getElementById("cmd");
-  input.placeholder = `Was sagst du zu ${companionName()}?`;
-  document.getElementById("talk-indicator").classList.remove("hidden");
-  document.getElementById("talk-name").textContent = `Gespräch mit ${companionName()}`;
-  input.classList.add("talking");
-  input.focus();
 }
 
 function exitTalkMode() {
   talkMode = false;
-  const input = document.getElementById("cmd");
-  input.placeholder = overrideCommand ? "Begründung: womit erzeugst du Hitze?" : "Was tust du?";
-  document.getElementById("talk-indicator").classList.add("hidden");
-  input.classList.remove("talking");
+  if (sceneOpen) renderSceneOptions();
 }
 
 // --- Entscheidung & Ending (M5) ----------------------------------------
@@ -994,6 +1254,7 @@ function openDecision(a, forced) {
 function closeDecision() {
   decisionOpen = false;
   document.getElementById("decide-overlay").classList.add("hidden");
+  pumpScene();
 }
 
 function wireDecision() {
@@ -1071,6 +1332,8 @@ async function showEnding() {
       fallbackText = `Du hast Tag ${(s.day ?? 0) + 1} erreicht.`;
     }
     gameOver = true;
+    sceneQueue.length = 0;
+    if (sceneOpen) closeScene();
     closeDecision();
     fillEnding(e, "Du hast nicht überlebt", fallbackText);
     document.getElementById("endscreen").classList.remove("hidden");
@@ -1095,14 +1358,14 @@ function newGameScreen() {
 let overrideCommand = null;
 async function doCommand() {
   if (actionBusy || gameOver) return;
-  const input = document.getElementById("cmd");
+  const input = document.getElementById("scene-input");
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
-  chat("player", text);
+  emit("player", text);
   if (talkMode) {
     await doAction({ kind: "talk", text });
-    if (!gameOver) input.focus();
+    if (!gameOver && sceneOpen) input.focus();
     return;
   }
   const payload = overrideCommand
@@ -1116,16 +1379,35 @@ async function doCommand() {
   const reason = r.reason ?? res.reason;
   if (escalate && reason === "no_heat") {
     overrideCommand = overrideCommand || text;
-    input.placeholder = "Begründung: womit erzeugst du Hitze?";
-  } else if (escalate && reason === "override_unclear") {
-    input.placeholder = "Nenne einen Gegenstand aus deinem Rucksack …";
-  } else {
+  } else if (!(escalate && reason === "override_unclear")) {
     overrideCommand = null;
-    input.placeholder = "Was tust du?";
   }
+  updateSceneInput();
+  if (escalate && reason === "override_unclear") input.placeholder = "Nenne einen Gegenstand aus deinem Rucksack …";
   const learned = r.override_learned || res.override_learned;
-  if (learned) log(`Gelernt: ${learned.key} liefert ab jetzt Hitze.`);
-  if (!gameOver) input.focus();
+  if (learned) emit("system", `Gelernt: ${learned.key} liefert ab jetzt Hitze.`, { scene: true });
+  if (!gameOver && sceneOpen) input.focus();
+}
+
+// --- KI-Anzeige (Issue #53): GET /llm/status ----------------------------
+let _llmPrev = null, _llmState = "ok";
+async function refreshLlmStatus() {
+  const el = document.getElementById("llm-status");
+  if (!el) return;
+  try {
+    const st = await getJSON("/llm/status");
+    const name = { claude: "Claude", cli: "Claude (CLI)", stub: "Stub" }[st.backend] || st.backend;
+    if (st.backend === "stub") _llmState = "stub";
+    else if (_llmPrev && st.fallbacks > _llmPrev.fallbacks) _llmState = "fallback";
+    else if (_llmPrev && st.calls_ok > _llmPrev.calls_ok) _llmState = "ok";
+    else if (!_llmPrev) _llmState = (st.fallbacks > 0 && st.calls_ok === 0) ? "fallback" : "ok";
+    _llmPrev = { fallbacks: st.fallbacks, calls_ok: st.calls_ok };
+    el.className = "row llm-status " + _llmState;
+    el.textContent = _llmState === "stub" ? "KI: Stub"
+      : _llmState === "fallback" ? "KI: Ersatzmodus" : `KI: ${name} ✓`;
+    el.title = `Backend: ${name} · erfolgreiche Aufrufe: ${st.calls_ok} · Rückfälle: ${st.fallbacks}`
+      + (st.last_error ? `\nLetzter Fehler (${st.last_error_at || "?"}): ${st.last_error}` : "");
+  } catch (e) { /* Anzeige nicht kritisch */ }
 }
 
 // --- Onboarding / Intro / Start ---------------------------------------
@@ -1146,12 +1428,22 @@ function wireHud() {
   document.getElementById("btn-newgame").onclick = newGameScreen;
   document.getElementById("btn-end-newgame").onclick = newGameScreen;
   document.getElementById("btn-roster").onclick = toggleRoster;
-  document.getElementById("btn-cmd").onclick = doCommand;
-  document.getElementById("cmd").addEventListener("keydown", (e) => {
+  document.getElementById("scene-send").onclick = doCommand;
+  document.getElementById("scene-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") doCommand();
-    if (e.key === "Escape" && talkMode) exitTalkMode();
   });
-  document.getElementById("talk-cancel").onclick = exitTalkMode;
+  document.getElementById("scene-close").onclick = closeScene;
+  document.getElementById("scene-done").onclick = closeScene;
+  document.getElementById("btn-freetext").onclick = openFreetextScene;
+  document.getElementById("btn-diary").onclick = () => {
+    const c = document.getElementById("chat");
+    const open = c.classList.toggle("hidden") === false;
+    document.getElementById("btn-diary").textContent = (open ? "▾" : "▸") + " Tagebuch";
+    if (open) c.scrollTop = c.scrollHeight;
+  };
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sceneOpen && !decisionOpen) closeScene();
+  });
   document.getElementById("btn-companion").onclick = toggleCompanionPanel;
   document.getElementById("panel-close").onclick = () => {
     document.getElementById("panel").classList.add("hidden");
@@ -1177,6 +1469,7 @@ async function startGame(state) {
   await refreshState();
   await loadActionBar();
   await refreshCompanion();
+  refreshLlmStatus();
   // Bestehender Spielstand (z.B. nach Neustart): Chunks der Umgebung nachladen, sonst
   // gibt es keine Orte, keinen Treffpunkt und keinen Companion (wie nach dem Onboarding).
   ensureChunksInView()
@@ -1227,6 +1520,7 @@ async function submitOnboarding() {
     await refreshState();
     await loadActionBar();
     await refreshCompanion();
+    refreshLlmStatus();
     // Heimat-Chunks sofort im Hintergrund laden (kein Warten auf moveend).
     ensureChunksInView().then(() => refreshLocationsInView()).catch(() => {});
   } catch (e) {
